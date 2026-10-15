@@ -1,0 +1,7 @@
+Nous démarrons Frontend Complexity Analyzer dans ce workspace VSCode. Lis d'abord AGENTS.md, docs/context/conversation-handoff.md, docs/architecture/target-architecture.md, docs/decisions/ADR-001-scoring.md, puis l'intégralité des cinq fichiers de docs/specifications/.
+
+Objectif de cette première session : produire une spécification consolidée V4, avec matrice de traçabilité des exigences vers chacun des cinq documents, différences de versions, ambiguïtés, décisions à prendre, architecture modulaire détaillée, contrats TypeScript proposés, métriques formalisées, critères d'acceptation et backlog priorisé. Préserve les sources originales et distingue strictement exigences documentées, propositions antérieures et nouveaux arbitrages.
+
+Contexte confirmé : librairies React/TypeScript organisées par répertoire de composant, tests Jest et Playwright proches des sources, analyse locale Windows/VSCode, lecture seule des librairies. La séparation complexité intrinsèque / effort d'accessibilité / risque de maintenance est une proposition à valider. Les pondérations actuelles des sources sont contradictoires.
+
+Ne développe pas encore la CLI ni les analyseurs. Commence par présenter les arbitrages les plus structurants, puis attends ma validation avant toute implémentation. Toute future modification de code devra comporter ses tests, commentaires/TSDoc en français, vérifications lint/typecheck/tests/build et documentation à jour.
