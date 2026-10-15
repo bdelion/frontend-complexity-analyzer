@@ -18,6 +18,7 @@ La [V4](../design/specification-v4.md) reste la référence de conception valid�
 | `coverage.ts`                | Bundle de couverture existant avec vérification SHA-256                                                  |
 | `sonar.ts`                   | Export Generic Issues informatif ; pas de publication                                                    |
 | `cli.ts`, `index.ts`         | Commandes et API publique, codes 0/1/2                                                                   |
+| `progress.ts`                | Indicateur stderr, phases et estimation du temps restant par phase ; observateur optionnel du moteur     |
 
 ## Décisions d'implémentation
 

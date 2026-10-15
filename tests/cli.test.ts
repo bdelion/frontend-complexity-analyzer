@@ -3,6 +3,7 @@ import { writeFile, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { runCli } from '../src/cli.js';
 import { sample } from './helpers.js';
+import { vi } from 'vitest';
 
 let data: Awaited<ReturnType<typeof sample>>;
 beforeAll(async () => {
@@ -84,4 +85,42 @@ test('un rapport partiel retourne 1 et explique les limites', async () => {
   const result = await run(['analyze', '--root', data.root, '--output', data.output, '--explain']);
   expect(result.code).toBe(1);
   expect(result.err).toContain('TEST_FRAMEWORK_AMBIGUOUS');
+});
+
+test('progression optionnelle et nettoyage du terminal en cas d’erreur', async () => {
+  const silent = await run(['schema', 'config', '--no-progress']);
+  expect(silent.code).toBe(0);
+  expect(silent.err).toBe('');
+  expect(JSON.parse(silent.out)).toHaveProperty('$schema');
+  const events: string[] = [];
+  expect(
+    await runCli(['schema', 'config'], {
+      interactive: true,
+      out: () => {
+        events.push('résultat');
+      },
+      err: (text) => {
+        events.push(text);
+      },
+    }),
+  ).toBe(0);
+  const resultIndex = events.indexOf('résultat');
+  expect(events[resultIndex - 1]).toBe('\r\u001b[2K');
+  let err = '';
+  const clear = vi.spyOn(globalThis, 'clearInterval');
+  try {
+    const result = await runCli(['analyze'], {
+      out: () => {},
+      err: (t) => {
+        err += t;
+      },
+      interactive: true,
+    });
+    expect(result).toBe(2);
+    expect(clear).toHaveBeenCalled();
+    expect(err).toContain('\r\u001b[2K');
+    expect(err).toContain('Erreur');
+  } finally {
+    clear.mockRestore();
+  }
 });

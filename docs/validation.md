@@ -4,9 +4,11 @@ Environnement : Windows, Node v22.23.3, Intel Core i3-4130 à 3,40 GHz, environ 
 
 ## Résultat du passage final
 
-`npm.cmd run test:coverage` : **50 tests réussis dans 7 fichiers**, y compris les tests E2E du binaire compilé. Couverture globale : instructions et lignes **97,38 %**, branches **94,84 %**, fonctions **94,73 %**. Tous les seuils >80 % sont respectés. Les sous-processus des tests E2E sont vérifiés fonctionnellement ; leur couverture n'est pas fusionnée avec celle de Vitest.
+`npm.cmd run test:coverage` : **55 tests réussis dans 8 fichiers**, y compris les tests E2E du binaire compilé. Couverture globale : instructions et lignes **97,48 %**, branches **94,67 %**, fonctions **95,45 %**. Tous les seuils >80 % sont respectés. Les sous-processus des tests E2E sont vérifiés fonctionnellement ; leur couverture n'est pas fusionnée avec celle de Vitest.
 
 Les tests ciblent notamment les suites Playwright (`test.describe`), les namespaces et alias de frameworks, les `.each` simples et en template, les annotations conditionnelles et les suites ignorées, en plus des critères ci-dessous.
+
+L'indicateur d'avancement est vérifié avec une horloge contrôlée : estimation par phase, compteurs, arrêt des timers, nettoyage avant résultats/erreurs, largeur du terminal et silence avec `--no-progress`. Le moteur produit les mêmes métriques avec ou sans observateur. Un essai manuel en terminal Windows a confirmé l'animation sur une ligne et l'affichage d'une durée restante estimée.
 
 ## Contrôles à reproduire
 

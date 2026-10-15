@@ -10,6 +10,8 @@ import { analyzeCode } from './code-analyzer.js';
 import { analyzeInteractions } from './interaction-analyzer.js';
 import { analyzeTests } from './test-analyzer.js';
 import { aggregate } from './aggregation.js';
+import { setImmediate } from 'node:timers/promises';
+import type { ProgressObserver, ProgressUpdate } from './progress.js';
 
 /** Version des résultats et algorithmes publiés. */
 export const TOOL_VERSION = '0.1.0';
@@ -17,6 +19,7 @@ export const TOOL_VERSION = '0.1.0';
 /** Analyse une configuration sans écrire ni exécuter les entrées.
  * @param config Configuration déjà validée.
  * @param componentFilter Identifiant ou nom non ambigu d'un composant.
+ * @param onProgress Observateur facultatif, sans effet sur les métriques.
  * @returns Rapport canonique validé.
  * @throws Si le périmètre ou le filtre est invalide.
  * @example await analyze(config, 'ds:src/Button')
@@ -24,7 +27,14 @@ export const TOOL_VERSION = '0.1.0';
 export async function analyze(
   config: Configuration,
   componentFilter?: string,
+  onProgress?: ProgressObserver,
 ): Promise<AnalysisReport> {
+  const notify = async (update: ProgressUpdate): Promise<void> => {
+    if (onProgress) {
+      onProgress(update);
+      await setImmediate();
+    }
+  };
   const report: AnalysisReport = {
     schemaVersion: '1.0.0',
     toolVersion: TOOL_VERSION,
@@ -69,6 +79,7 @@ export async function analyze(
   const projects = new Map<string, Project>();
   const excluded = matcher(config.exclusions);
   for (const library of config.libraries) {
+    await notify({ phase: `Découverte ${library.id}` });
     report.libraries.push({ id: library.id, root: library.root, metrics: [] });
     const inventory = await walk(
       library.root,
@@ -87,7 +98,13 @@ export async function analyze(
         message: `Lien non parcouru : ${link}`,
       });
     const cases = new Set<string>();
+    let indexed = 0;
     for (const file of inventory.files) {
+      await notify({
+        phase: `Indexation ${library.id}`,
+        completed: indexed++,
+        total: inventory.files.length,
+      });
       const relative = portable(path.relative(library.root, file));
       if (cases.has(relative.toLowerCase())) throw new Error(`Collision de casse : ${relative}`);
       cases.add(relative.toLowerCase());
@@ -168,7 +185,13 @@ export async function analyze(
     .update(report.configurationFingerprint + JSON.stringify(projectOptions))
     .digest('hex');
   // Tous les fichiers du projet sont présents avant la résolution des symboles.
+  let detected = 0;
   for (const unit of report.units) {
+    await notify({
+      phase: 'Détection des composants',
+      completed: detected++,
+      total: report.units.length,
+    });
     const source = ast.get(unit.id)!;
     const syntax = source
       .getProject()
@@ -214,7 +237,13 @@ export async function analyze(
       );
     }
   }
+  let linked = 0;
   for (const unit of report.units) {
+    await notify({
+      phase: 'Résolution des dépendances',
+      completed: linked++,
+      total: report.units.length,
+    });
     const candidates = report.components
       .filter(
         (c) =>
@@ -335,6 +364,7 @@ export async function analyze(
     );
   }
   // Les tests multi-composants sont conservés comme unités partagées uniques.
+  await notify({ phase: 'Attribution des fichiers partagés' });
   for (const unit of report.units.filter((u) => u.kind !== 'production')) {
     const owners = [
       ...new Set(
@@ -401,7 +431,13 @@ export async function analyze(
         ),
     );
   }
+  let measured = 0;
   for (const unit of report.units) {
+    await notify({
+      phase: 'Analyse des fichiers',
+      completed: measured++,
+      total: report.units.length,
+    });
     const source = ast.get(unit.id)!;
     if (unit.analysisStatus === 'failed') {
       unit.metrics.push(makeMetric(unit, 'code.files', 1, [evidenceFor(unit, source)]));
@@ -453,9 +489,20 @@ export async function analyze(
     unit.usedByComponentIds.sort();
   }
   // Une sélection ou un test partagé peut modifier l'appartenance après l'indexation du graphe.
+  await notify({
+    phase: 'Analyse des fichiers',
+    completed: report.units.length,
+    total: report.units.length,
+  });
   for (const unit of report.units)
     for (const metric of unit.metrics) metric.scope = unit.ownerComponentId ? 'own' : 'shared';
+  let aggregated = 0;
   for (const component of report.components) {
+    await notify({
+      phase: 'Agrégation des composants',
+      completed: aggregated++,
+      total: report.components.length,
+    });
     const own = report.units.filter((u) => component.ownUnitIds.includes(u.id));
     component.metrics = aggregate(component.id, own, 'own');
     const shared = report.units.filter((u) => component.sharedUnitIds.includes(u.id));
@@ -471,6 +518,7 @@ export async function analyze(
       )
       .map((d) => d.id);
   }
+  await notify({ phase: 'Agrégation des librairies' });
   for (const library of report.libraries)
     library.metrics = aggregate(
       library.id,
@@ -489,6 +537,7 @@ export async function analyze(
   report.units.sort((a, b) => a.id.localeCompare(b.id, 'en'));
   report.components.sort((a, b) => a.id.localeCompare(b.id, 'en'));
   report.diagnostics.sort((a, b) => a.id.localeCompare(b.id, 'en'));
+  await notify({ phase: 'Validation du rapport' });
   return validateReport(report);
 }
 

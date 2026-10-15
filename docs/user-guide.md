@@ -63,6 +63,10 @@ Chaque source possède une identité unique `libraryId:chemin/relatif`, chaque c
 
 ## Lire les résultats
 
+Dans un terminal interactif, un indicateur d'activité affiche la phase, le nombre d'unités traitées, le pourcentage, le temps écoulé total et le temps restant estimé pour cette phase. L'estimation commence après au moins deux unités et 500 ms ; elle peut varier selon la taille des fichiers. La découverte et la génération de rapports ont un volume inconnu : « en calcul » est affiché, sans promesse de durée totale. Les titres longs sont raccourcis pour conserver l'indicateur sur une ligne.
+
+L'animation se rafraîchit entre unités et pendant les opérations asynchrones ; un calcul synchrone long (AST, agrégation ou rendu d'un rapport) peut momentanément la figer. En CI ou lorsque stderr est redirigé, des messages sobres annoncent les changements de phase sans séquences de contrôle. `--no-progress` désactive l'indicateur pour toutes les commandes. stdout reste réservé aux résultats, notamment avec `--stdout`.
+
 `report.json` est le contrat versionné ; `report.md`, `report.csv` et `index.html` sont des vues du même rapport. HTML autonome, sans CDN ni appels réseau ; valeurs échappées, formules CSV neutralisées. Les informations détaillées par unité, rôles, noms ARIA, touches, distribution CC et liens du graphe se trouvent dans le JSON.
 
 - `measured` : le fait statique a été compté ; cela ne prouve pas le comportement runtime.

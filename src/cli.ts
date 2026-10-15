@@ -18,11 +18,17 @@ import { writeSafe } from './filesystem.js';
 import { reportSchema } from './models.js';
 import { importCoverage } from './coverage.js';
 import { sonarIssues } from './sonar.js';
+import { setImmediate } from 'node:timers/promises';
+import { ProgressIndicator } from './progress.js';
 
 /** Flux injectables pour tester les codes de sortie sans lancer de sous-processus. */
 export interface CliIO {
   out: (text: string) => void;
   err: (text: string) => void;
+  /** Active l'animation pour un terminal interactif ; faux pour les sorties injectées. */
+  interactive?: boolean;
+  /** Largeur du terminal utilisée pour conserver l'indicateur sur une ligne. */
+  columns?: number;
 }
 
 /** Exécute une commande sans modifier le processus appelant.
@@ -36,16 +42,50 @@ export async function runCli(
   io: CliIO = {
     out: (text) => process.stdout.write(text),
     err: (text) => process.stderr.write(text),
+    interactive: Boolean(process.stderr.isTTY),
+    columns: process.stderr.columns ?? 80,
   },
 ): Promise<number> {
   const program = new Command();
   let exitCode = 0;
+  let progress: ProgressIndicator | undefined;
+  const output = (text: string): void => {
+    progress?.stop();
+    io.out(text);
+  };
   program
     .name('analyzer')
     .description('Analyse statique React/TypeScript en lecture seule, sans score non calibré')
     .version(TOOL_VERSION);
+  program.option('--no-progress', 'Masquer l’indicateur et les messages d’avancement');
+  program.hook('preAction', async (_command, action) => {
+    if (program.opts<{ progress: boolean }>().progress !== false) {
+      progress = new ProgressIndicator(
+        io.err,
+        io.interactive ?? false,
+        true,
+        undefined,
+        io.columns ?? 80,
+      );
+      const labels: Record<string, string> = {
+        analyze: 'Lecture de la configuration',
+        report: 'Génération des rapports',
+        compare: 'Comparaison des rapports',
+        sonar: 'Export Sonar',
+        schema: 'Génération du schéma',
+        'validate-config': 'Validation de la configuration',
+        add: 'Archivage du rapport',
+        list: 'Lecture de l’historique',
+      };
+      progress.update({ phase: labels[action.name()] ?? 'Préparation' });
+      await setImmediate();
+    }
+  });
+  program.hook('postAction', () => {
+    progress?.stop();
+  });
   program.exitOverride();
-  program.configureOutput({ writeOut: io.out, writeErr: io.err });
+  program.configureOutput({ writeOut: output, writeErr: io.err });
   program
     .command('analyze')
     .description('Analyser des librairies sans exécuter leurs scripts')
@@ -72,16 +112,30 @@ export async function runCli(
       ) => {
         const started = performance.now();
         const config = await loadConfiguration(options);
-        let report = await analyze(config, options.component);
-        if (options.coverage) report = await importCoverage(report, options.coverage);
+        let report = await analyze(
+          config,
+          options.component,
+          progress ? (update) => progress!.update(update) : undefined,
+        );
+        if (options.coverage) {
+          progress?.update({ phase: 'Import de la couverture' });
+          report = await importCoverage(report, options.coverage);
+        }
+        progress?.update({ phase: 'Génération des rapports' });
         const files = await writeReports(
           report,
           config.outputDirectory,
           config.formats,
           [options.config, options.coverage].filter((f): f is string => Boolean(f)),
         );
-        if (options.history) io.err(`Archive : ${await archiveReport(report, options.history)}\n`);
-        if (options.stdout) io.out(JSON.stringify(report, null, 2) + '\n');
+        let archive: string | undefined;
+        if (options.history) {
+          progress?.update({ phase: 'Archivage du rapport' });
+          archive = await archiveReport(report, options.history);
+        }
+        progress?.stop();
+        if (archive) io.err(`Archive : ${archive}\n`);
+        if (options.stdout) output(JSON.stringify(report, null, 2) + '\n');
         io.err(
           `${report.components.length} composants ; ${report.coverage.eligibleFiles} fichiers ; état ${report.status}.\n${files.join('\n')}\n`,
         );
@@ -106,7 +160,7 @@ export async function runCli(
     .requiredOption('-c, --config <file>', 'Configuration JSON')
     .action(async (options: ConfigOptions) => {
       const config = await loadConfiguration(options);
-      io.out(JSON.stringify(config, null, 2) + '\n');
+      output(JSON.stringify(config, null, 2) + '\n');
     });
   program
     .command('report')
@@ -117,7 +171,7 @@ export async function runCli(
     .action(async (input: string, options: { output: string; format: string }) => {
       const requested = z.array(z.enum(formats)).min(1).parse(options.format.split(','));
       const report = await readReport(input);
-      io.out(
+      output(
         (await writeReports(report, options.output, requested as Format[], [input])).join('\n') +
           '\n',
       );
@@ -139,7 +193,7 @@ export async function runCli(
           ...before.libraries.map((l) => l.root),
           ...after.libraries.map((l) => l.root),
         ]);
-      else io.out(text);
+      else output(text);
     });
   const history = program
     .command('history')
@@ -149,13 +203,13 @@ export async function runCli(
     .argument('<input>')
     .requiredOption('-o, --output <directory>', 'Répertoire d’archives')
     .action(async (input: string, options: { output: string }) =>
-      io.out((await archiveReport(await readReport(input), options.output)) + '\n'),
+      output((await archiveReport(await readReport(input), options.output)) + '\n'),
     );
   history
     .command('list')
     .argument('<directory>')
     .action(async (directory: string) =>
-      io.out(JSON.stringify(await listHistory(directory), null, 2) + '\n'),
+      output(JSON.stringify(await listHistory(directory), null, 2) + '\n'),
     );
   program
     .command('sonar')
@@ -170,7 +224,7 @@ export async function runCli(
         JSON.stringify(await sonarIssues(report, options.projectBase), null, 2) + '\n',
         [input, ...report.libraries.map((l) => l.root)],
       );
-      io.out(`${options.output}\n`);
+      output(`${options.output}\n`);
     });
   program
     .command('schema')
@@ -179,7 +233,7 @@ export async function runCli(
     .action((kind: string) => {
       if (kind !== 'config' && kind !== 'report')
         throw new Error('Schéma attendu : config ou report');
-      io.out(
+      output(
         JSON.stringify(
           kind === 'config'
             ? z.toJSONSchema(configSchema, { io: 'input' })
@@ -193,6 +247,7 @@ export async function runCli(
     await program.parseAsync(argv, { from: 'user' });
     return exitCode;
   } catch (error) {
+    progress?.stop();
     const commandError = error as { code?: string; message?: string };
     if (
       commandError.code === 'commander.helpDisplayed' ||
@@ -202,6 +257,8 @@ export async function runCli(
     if (!commandError.code?.startsWith('commander.'))
       io.err(`Erreur : ${error instanceof Error ? error.message : String(error)}\n`);
     return 2;
+  } finally {
+    progress?.stop();
   }
 }
 

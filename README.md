@@ -39,6 +39,8 @@ Les commandes `analyzer` et `rcca` sont déclarées comme binaires du package ; 
 
 Codes de sortie : **0** succès, **1** rapport partiel à consulter, **2** configuration/entrée invalide ou erreur fatale. `--stdout` réserve stdout au JSON ; résumé, diagnostics et `--stats` vont sur stderr.
 
+Un indicateur animé affiche la phase, le temps écoulé et le temps restant **estimé pour la phase courante** lorsque son volume est connu. En CI ou en redirection, seuls les changements de phase sont journalisés. `--no-progress` désactive cet affichage.
+
 ## Qualité et documentation
 
 ```powershell

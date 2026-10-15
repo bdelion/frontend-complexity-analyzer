@@ -28,3 +28,4 @@ export { runCli } from './cli.js';
 export type { CliIO } from './cli.js';
 export { importCoverage, coverageSchema } from './coverage.js';
 export { sonarIssues } from './sonar.js';
+export type { ProgressObserver, ProgressUpdate } from './progress.js';

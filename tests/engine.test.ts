@@ -23,7 +23,19 @@ describe('pipeline lecture seule', () => {
     const hash = createHash('sha256')
       .update(await readFile(file))
       .digest('hex');
-    const again = await analyze(config);
+    const updates: import('../src/progress.js').ProgressUpdate[] = [];
+    const again = await analyze(config, undefined, (update) => {
+      updates.push(update);
+    });
+    expect(
+      updates.some(
+        (update) =>
+          update.phase === 'Analyse des fichiers' &&
+          update.completed === update.total &&
+          update.total === 2,
+      ),
+    ).toBe(true);
+    expect(updates.at(-1)?.phase).toBe('Validation du rapport');
     expect(
       createHash('sha256')
         .update(await readFile(file))
