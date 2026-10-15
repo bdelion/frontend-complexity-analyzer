@@ -1,0 +1,57 @@
+# Validation locale du CLI
+
+Environnement : Windows, Node v22.23.3, Intel Core i3-4130 à 3,40 GHz, environ 8 Go de RAM. Les résultats concernent des fixtures synthétiques ; ils ne constituent pas une validation des comptages sur les librairies internes.
+
+## Résultat du passage final
+
+`npm.cmd run test:coverage` : **50 tests réussis dans 7 fichiers**, y compris les tests E2E du binaire compilé. Couverture globale : instructions et lignes **97,38 %**, branches **94,84 %**, fonctions **94,73 %**. Tous les seuils >80 % sont respectés. Les sous-processus des tests E2E sont vérifiés fonctionnellement ; leur couverture n'est pas fusionnée avec celle de Vitest.
+
+Les tests ciblent notamment les suites Playwright (`test.describe`), les namespaces et alias de frameworks, les `.each` simples et en template, les annotations conditionnelles et les suites ignorées, en plus des critères ci-dessous.
+
+## Contrôles à reproduire
+
+```powershell
+npm.cmd ci --ignore-scripts
+npm.cmd run typecheck
+npm.cmd run lint
+npm.cmd run format:check
+npm.cmd test
+npm.cmd run test:coverage
+npm.cmd run build
+npm.cmd run docs
+npm.cmd run schemas
+node dist/cli.js analyze --config examples/analyzer.config.json --explain --stats
+npm.cmd run benchmark
+```
+
+Le seuil des tests est de 60 secondes par cas pour laisser une marge à l'instrumentation de couverture sur cette machine. Le test multi-librairies réalise plusieurs analyses indépendantes ; un premier passage instrumenté avec benchmark et génération documentaire concurrents a dépassé l'ancienne limite de 30 secondes. Les validations finales doivent être effectuées sans ces tâches lourdes concurrentes.
+
+## Repère de performance synthétique
+
+Trois processus distincts, 100 composants, 200 fichiers, 300 LOC de production :
+
+| Exécution | Durée incluant démarrage et rapports | RSS maximale       |
+| --------- | ------------------------------------ | ------------------ |
+| 1         | 5,919 s                              | 269 832 192 octets |
+| 2         | 6,605 s                              | 267 997 184 octets |
+| 3         | 8,358 s                              | 269 717 504 octets |
+
+Ces mesures ont été obtenues pendant un passage de couverture des tests ; les caches disque n'ont pas été purgés. Elles donnent un ordre de grandeur local, sans garantir le résultat sur une librairie réelle ni satisfaire à elles seules AC15 de la V4. `FCA_BENCH_COMPONENTS` permet de changer la taille du corpus. Les fixtures et rapports générés restent dans le dossier temporaire affiché par le script.
+
+## Correspondance avec les critères V4
+
+| Critères       | Vérification                                                                                                          |
+| -------------- | --------------------------------------------------------------------------------------------------------------------- |
+| AC01/AC02/AC04 | Tests moteur : multi-librairies, exports/wrappers/barrels, partage et cycles                                          |
+| AC03           | Tests de fichiers : sorties recouvrant les entrées, jonctions, liens physiques ; tests moteur/E2E de non-modification |
+| AC05/AC06      | Fixtures chiffrées, fonctions imbriquées, données absentes, parsing invalide, imports dynamiques/irrésolus            |
+| AC07/AC08      | Schémas runtime, références, preuves, doublons, déterminisme et empreinte de configuration                            |
+| AC09/AC10      | Tests Jest/Vitest/Playwright déclaratifs, ARIA/clavier et limites explicites                                          |
+| AC11/AC12      | Commandes injectables et binaire compilé ; JSON/Markdown/CSV/HTML échappés                                            |
+| AC13           | Ajouts/suppressions, incompatibilités, données estimées et archives uniques                                           |
+| AC14           | Scripts typecheck/lint/tests/couverture/build/TypeDoc                                                                 |
+| AC15           | Repère synthétique disponible ; corpus/machine de référence encore à convenir                                         |
+| AC16           | Scoring différé conformément à A01/A02 ; aucun score à valider dans ce patch                                          |
+| AC17           | Exemples Jenkins/Docker et contrat d'export Sonar testés localement ; services non exécutés                           |
+
+Docker absent de l'environnement de développement ; Jenkins et Sonar ne sont pas connectés. La génération de leurs fichiers est distincte d'une validation en service. Aucun push, déploiement ou publication n'est effectué.

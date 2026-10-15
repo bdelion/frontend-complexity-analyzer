@@ -1,0 +1,9 @@
+{
+  "entryPoints": ["src/index.ts"],
+  "out": "docs/api",
+  "readme": "none",
+  "excludePrivate": true,
+  "highlightLanguages": ["typescript", "json", "powershell", "bash"],
+  "validation": { "notExported": true, "invalidLink": true },
+  "treatWarningsAsErrors": true
+}

@@ -1,0 +1,7 @@
+{
+  "schemaVersion": "1.0.0",
+  "libraries": [{ "id": "demo", "root": "./demo", "componentGlobs": ["**"] }],
+  "outputDirectory": "../reports/demo",
+  "formats": ["json", "md", "csv", "html"],
+  "testPatterns": { "jest": ["**/*.test.tsx"], "playwright": ["**/*.spec.ts"] }
+}

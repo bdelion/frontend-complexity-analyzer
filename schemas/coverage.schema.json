@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "schemaVersion": { "type": "string", "const": "1.0.0" },
+    "producer": { "type": "string", "minLength": 1 },
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "libraryId": { "type": "string" },
+          "relativePath": { "type": "string" },
+          "sha256": { "type": "string", "pattern": "^[a-fA-F0-9]{64}$" },
+          "lines": {
+            "type": "object",
+            "properties": {
+              "covered": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+              "total": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 }
+            },
+            "required": ["covered", "total"],
+            "additionalProperties": false
+          },
+          "branches": {
+            "type": "object",
+            "properties": {
+              "covered": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+              "total": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 }
+            },
+            "required": ["covered", "total"],
+            "additionalProperties": false
+          }
+        },
+        "required": ["libraryId", "relativePath", "sha256", "lines", "branches"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["schemaVersion", "producer", "files"],
+  "additionalProperties": false
+}

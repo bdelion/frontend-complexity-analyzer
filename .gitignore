@@ -6,3 +6,6 @@ history/
 .env
 .env.*
 !.env.example
+docs/api/
+*.tsbuildinfo
+ci-analyzer.config.json

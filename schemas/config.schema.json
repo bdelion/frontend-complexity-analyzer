@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "schemaVersion": { "default": "1.0.0", "type": "string", "const": "1.0.0" },
+    "libraries": {
+      "minItems": 1,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-zA-Z0-9_.-]+$" },
+          "root": { "type": "string", "minLength": 1 },
+          "tsconfig": { "type": "string" },
+          "componentGlobs": { "default": ["**"], "type": "array", "items": { "type": "string" } }
+        },
+        "required": ["id", "root"],
+        "additionalProperties": false
+      }
+    },
+    "exclusions": {
+      "default": ["**/node_modules/**", "**/dist/**", "**/coverage/**", "**/.git/**"],
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "testPatterns": {
+      "default": { "jest": [], "vitest": [], "playwright": [] },
+      "type": "object",
+      "properties": {
+        "jest": { "default": [], "type": "array", "items": { "type": "string" } },
+        "vitest": { "default": [], "type": "array", "items": { "type": "string" } },
+        "playwright": { "default": [], "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": false
+    },
+    "ownershipOverrides": {
+      "default": {},
+      "type": "object",
+      "propertyNames": { "type": "string" },
+      "additionalProperties": { "type": ["string", "null"] }
+    },
+    "outputDirectory": { "default": "./reports", "type": "string" },
+    "formats": {
+      "default": ["json", "md"],
+      "minItems": 1,
+      "type": "array",
+      "items": { "type": "string", "enum": ["json", "md", "csv", "html"] }
+    }
+  },
+  "required": ["libraries"],
+  "additionalProperties": false
+}

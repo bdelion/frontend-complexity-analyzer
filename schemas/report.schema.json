@@ -1,0 +1,430 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "schemaVersion": { "type": "string", "const": "1.0.0" },
+    "toolVersion": { "type": "string" },
+    "runId": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+    },
+    "generatedAt": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+    },
+    "status": { "type": "string", "enum": ["complete", "partial"] },
+    "configurationFingerprint": { "type": "string" },
+    "algorithmVersions": {
+      "type": "object",
+      "propertyNames": { "type": "string" },
+      "additionalProperties": { "type": "string" }
+    },
+    "libraries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "root": { "type": "string" },
+          "metrics": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": { "type": "string" },
+                "algorithmVersion": { "type": "string" },
+                "unit": { "type": "string", "enum": ["count", "lines", "ratio", "depth"] },
+                "subjectId": { "type": "string" },
+                "scope": { "type": "string", "enum": ["own", "shared", "exposure"] },
+                "observation": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "status": { "type": "string", "const": "measured" },
+                        "value": { "type": "number", "minimum": 0 }
+                      },
+                      "required": ["status", "value"],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "status": { "type": "string", "const": "estimated" },
+                        "value": { "type": "number", "minimum": 0 },
+                        "rationale": { "type": "string" }
+                      },
+                      "required": ["status", "value", "rationale"],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "status": { "type": "string", "const": "unavailable" },
+                        "value": { "type": "null" },
+                        "reason": { "type": "string" }
+                      },
+                      "required": ["status", "value", "reason"],
+                      "additionalProperties": false
+                    }
+                  ]
+                },
+                "evidence": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "libraryId": { "type": "string" },
+                      "relativePath": { "type": "string" },
+                      "startLine": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+                      "endLine": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+                      "kind": {
+                        "type": "string",
+                        "enum": ["ast", "syntax", "inventory", "imported-report"]
+                      }
+                    },
+                    "required": ["libraryId", "relativePath", "startLine", "endLine", "kind"],
+                    "additionalProperties": false
+                  }
+                },
+                "diagnosticIds": { "type": "array", "items": { "type": "string" } }
+              },
+              "required": [
+                "id",
+                "algorithmVersion",
+                "unit",
+                "subjectId",
+                "scope",
+                "observation",
+                "evidence",
+                "diagnosticIds"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": ["id", "root", "metrics"],
+        "additionalProperties": false
+      }
+    },
+    "units": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "libraryId": { "type": "string" },
+          "relativePath": { "type": "string" },
+          "kind": { "type": "string", "enum": ["production", "test", "story"] },
+          "ownerComponentId": { "type": ["string", "null"] },
+          "usedByComponentIds": { "type": "array", "items": { "type": "string" } },
+          "dependencies": { "type": "array", "items": { "type": "string" } },
+          "externalDependencies": { "type": "array", "items": { "type": "string" } },
+          "typeDependencies": { "type": "array", "items": { "type": "string" } },
+          "metrics": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": { "type": "string" },
+                "algorithmVersion": { "type": "string" },
+                "unit": { "type": "string", "enum": ["count", "lines", "ratio", "depth"] },
+                "subjectId": { "type": "string" },
+                "scope": { "type": "string", "enum": ["own", "shared", "exposure"] },
+                "observation": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "status": { "type": "string", "const": "measured" },
+                        "value": { "type": "number", "minimum": 0 }
+                      },
+                      "required": ["status", "value"],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "status": { "type": "string", "const": "estimated" },
+                        "value": { "type": "number", "minimum": 0 },
+                        "rationale": { "type": "string" }
+                      },
+                      "required": ["status", "value", "rationale"],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "status": { "type": "string", "const": "unavailable" },
+                        "value": { "type": "null" },
+                        "reason": { "type": "string" }
+                      },
+                      "required": ["status", "value", "reason"],
+                      "additionalProperties": false
+                    }
+                  ]
+                },
+                "evidence": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "libraryId": { "type": "string" },
+                      "relativePath": { "type": "string" },
+                      "startLine": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+                      "endLine": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+                      "kind": {
+                        "type": "string",
+                        "enum": ["ast", "syntax", "inventory", "imported-report"]
+                      }
+                    },
+                    "required": ["libraryId", "relativePath", "startLine", "endLine", "kind"],
+                    "additionalProperties": false
+                  }
+                },
+                "diagnosticIds": { "type": "array", "items": { "type": "string" } }
+              },
+              "required": [
+                "id",
+                "algorithmVersion",
+                "unit",
+                "subjectId",
+                "scope",
+                "observation",
+                "evidence",
+                "diagnosticIds"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "details": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "metricId": { "type": "string" },
+                "value": { "type": "string" },
+                "evidence": {
+                  "type": "object",
+                  "properties": {
+                    "libraryId": { "type": "string" },
+                    "relativePath": { "type": "string" },
+                    "startLine": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+                    "endLine": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+                    "kind": {
+                      "type": "string",
+                      "enum": ["ast", "syntax", "inventory", "imported-report"]
+                    }
+                  },
+                  "required": ["libraryId", "relativePath", "startLine", "endLine", "kind"],
+                  "additionalProperties": false
+                }
+              },
+              "required": ["metricId", "value", "evidence"],
+              "additionalProperties": false
+            }
+          },
+          "analysisStatus": { "type": "string", "enum": ["complete", "partial", "failed"] }
+        },
+        "required": [
+          "id",
+          "libraryId",
+          "relativePath",
+          "kind",
+          "ownerComponentId",
+          "usedByComponentIds",
+          "dependencies",
+          "externalDependencies",
+          "typeDependencies",
+          "metrics",
+          "details",
+          "analysisStatus"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "components": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "libraryId": { "type": "string" },
+          "relativeDirectory": { "type": "string" },
+          "displayName": { "type": "string" },
+          "exportSymbolIds": { "type": "array", "items": { "type": "string" } },
+          "ownUnitIds": { "type": "array", "items": { "type": "string" } },
+          "sharedUnitIds": { "type": "array", "items": { "type": "string" } },
+          "metrics": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": { "type": "string" },
+                "algorithmVersion": { "type": "string" },
+                "unit": { "type": "string", "enum": ["count", "lines", "ratio", "depth"] },
+                "subjectId": { "type": "string" },
+                "scope": { "type": "string", "enum": ["own", "shared", "exposure"] },
+                "observation": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "status": { "type": "string", "const": "measured" },
+                        "value": { "type": "number", "minimum": 0 }
+                      },
+                      "required": ["status", "value"],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "status": { "type": "string", "const": "estimated" },
+                        "value": { "type": "number", "minimum": 0 },
+                        "rationale": { "type": "string" }
+                      },
+                      "required": ["status", "value", "rationale"],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "status": { "type": "string", "const": "unavailable" },
+                        "value": { "type": "null" },
+                        "reason": { "type": "string" }
+                      },
+                      "required": ["status", "value", "reason"],
+                      "additionalProperties": false
+                    }
+                  ]
+                },
+                "evidence": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "libraryId": { "type": "string" },
+                      "relativePath": { "type": "string" },
+                      "startLine": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+                      "endLine": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+                      "kind": {
+                        "type": "string",
+                        "enum": ["ast", "syntax", "inventory", "imported-report"]
+                      }
+                    },
+                    "required": ["libraryId", "relativePath", "startLine", "endLine", "kind"],
+                    "additionalProperties": false
+                  }
+                },
+                "diagnosticIds": { "type": "array", "items": { "type": "string" } }
+              },
+              "required": [
+                "id",
+                "algorithmVersion",
+                "unit",
+                "subjectId",
+                "scope",
+                "observation",
+                "evidence",
+                "diagnosticIds"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "diagnosticIds": { "type": "array", "items": { "type": "string" } }
+        },
+        "required": [
+          "id",
+          "libraryId",
+          "relativeDirectory",
+          "displayName",
+          "exportSymbolIds",
+          "ownUnitIds",
+          "sharedUnitIds",
+          "metrics",
+          "diagnosticIds"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "coverage": {
+      "type": "object",
+      "properties": {
+        "discoveredFiles": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+        "excludedFiles": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+        "eligibleFiles": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+        "analyzedFiles": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+        "partialFiles": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+        "failedFiles": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+        "unresolvedCandidateIds": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": [
+        "discoveredFiles",
+        "excludedFiles",
+        "eligibleFiles",
+        "analyzedFiles",
+        "partialFiles",
+        "failedFiles",
+        "unresolvedCandidateIds"
+      ],
+      "additionalProperties": false
+    },
+    "diagnostics": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "code": { "type": "string" },
+          "severity": { "type": "string", "enum": ["info", "warning", "error"] },
+          "message": { "type": "string" },
+          "evidence": {
+            "type": "object",
+            "properties": {
+              "libraryId": { "type": "string" },
+              "relativePath": { "type": "string" },
+              "startLine": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+              "endLine": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+              "kind": {
+                "type": "string",
+                "enum": ["ast", "syntax", "inventory", "imported-report"]
+              }
+            },
+            "required": ["libraryId", "relativePath", "startLine", "endLine", "kind"],
+            "additionalProperties": false
+          }
+        },
+        "required": ["id", "code", "severity", "message"],
+        "additionalProperties": false
+      }
+    },
+    "profiles": {
+      "type": "object",
+      "properties": {
+        "intrinsic": { "type": "array", "items": { "type": "string" } },
+        "accessibility": { "type": "array", "items": { "type": "string" } },
+        "maintenance": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["intrinsic", "accessibility", "maintenance"],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "toolVersion",
+    "runId",
+    "generatedAt",
+    "status",
+    "configurationFingerprint",
+    "algorithmVersions",
+    "libraries",
+    "units",
+    "components",
+    "coverage",
+    "diagnostics",
+    "profiles"
+  ],
+  "additionalProperties": false
+}

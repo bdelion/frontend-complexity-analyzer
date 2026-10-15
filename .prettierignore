@@ -1,0 +1,14 @@
+node_modules/
+dist/
+coverage/
+reports/
+history/
+docs/api/
+docs/specifications/
+docs/context/
+docs/decisions/
+docs/design/
+docs/architecture/target-architecture.md
+.agents/
+AGENTS.md
+ci-analyzer.config.json

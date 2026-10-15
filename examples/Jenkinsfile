@@ -1,0 +1,32 @@
+// Exemple pour un agent Windows : seuls les scripts de l'outil sont exécutés.
+pipeline {
+  agent { label 'windows' }
+  parameters {
+    string(name: 'LIBRARY_ROOT', defaultValue: 'D:\\Git\\design-system', description: 'Librairie inspectée en lecture seule')
+  }
+  stages {
+    stage('Install') { steps { bat 'npm.cmd ci --ignore-scripts' } }
+    stage('Typecheck') { steps { bat 'npm.cmd run typecheck' } }
+    stage('Lint') { steps { bat 'npm.cmd run lint' } }
+    stage('Format') { steps { bat 'npm.cmd run format:check' } }
+    stage('Tests') { steps { bat 'npm.cmd run test:coverage' } }
+    stage('Build') { steps { bat 'npm.cmd run build' } }
+    stage('Documentation') { steps { bat 'npm.cmd run docs' } }
+    stage('Analyze') {
+      steps {
+        script {
+          // Le paramètre devient une valeur JSON, sans interpolation dans la commande shell.
+          writeFile file: 'ci-analyzer.config.json', text: groovy.json.JsonOutput.toJson([
+            libraries: [[id: 'ci', root: params.LIBRARY_ROOT]],
+            outputDirectory: 'reports',
+            formats: ['json', 'md', 'csv', 'html']
+          ])
+          def result = bat(returnStatus: true, script: 'node dist/cli.js analyze --config ci-analyzer.config.json --explain')
+          if (result == 1) { unstable('Analyse partielle : consulter les diagnostics') }
+          else if (result != 0) { error('Échec de configuration ou d’analyse') }
+        }
+      }
+    }
+    stage('Archive') { steps { archiveArtifacts artifacts: 'reports/**', fingerprint: true } }
+  }
+}
