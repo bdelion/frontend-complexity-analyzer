@@ -352,17 +352,21 @@ function norm(value, [min, max]) {
   return 1 + (4 * (clamped - min)) / (max - min); // échelle 1-5
 }
 
-function percentileFor(sortedValues, value) {
+function percentileFor(indicesDescending, value) {
   // Part (0-100) des composants strictement moins complexes.
-  let below = 0;
-  for (const v of sortedValues) {
-    if (v < value) below++;
+  // indicesDescending : indices triés par complexité décroissante.
+  const n = indicesDescending.length;
+  // Nombre de composants plus complexes = position dans le tri descendant
+  let above = 0;
+  for (const v of indicesDescending) {
+    if (v > value) above++;
     else break;
   }
-  // 0.5 pour les ex æquo : moyenne des positions possibles
+  // Ex æquo : moyenne des positions possibles
   let equal = 0;
-  for (const v of sortedValues) if (v === value) equal++;
-  return Math.round(((below + 0.5 * (equal - 1)) / (sortedValues.length - 1)) * 100);
+  for (const v of indicesDescending) if (v === value) equal++;
+  const below = n - above - equal; // strictement moins complexes
+  return Math.round((below / (n - 1)) * 100);
 }
 
 const rows = [];
