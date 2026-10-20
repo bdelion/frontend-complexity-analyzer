@@ -184,31 +184,36 @@ function analyzeFile(filePath) {
 /** Fichiers à exclure de l'analyse (tests). */
 const EXCLUDE_RE = /\.(e2e|test|spec)\.(ts|tsx)$/;
 
-const FILE_RE = /\.(ts|tsx)$/;
-
 /**
  * Renvoie le nom du composant pour un fichier, ou null si le fichier
  * n'appartient pas à src/components/** (infrastructure partagée).
  *
- *   components/<Cat>/<Compo>/fichier.ts  -> <Compo>
- *   components/<Cat>/<Compo>/index.ts    -> <Compo> (barrel du composant)
- *   components/<CatPlat>/fichier.ts      -> <CatPlat> (catégorie plate)
- *   components/<CatPlat>/index.ts        -> <CatPlat>
- *   components/index.ts                  -> null (barrel racine)
+ * Règles (relatif à src/) :
+ *   components/index.ts                    -> null (barrel racine)
+ *   components/<Cat>/index.ts              -> <Cat> (barrel : fusionné dans la
+ *                                            catégorie plate, ou ignoré si la
+ *                                            catégorie contient des composants)
+ *   components/<Cat>/fichier.ts            -> <Cat> (catégorie plate)
+ *   components/<Cat>/<Compo>/index.ts      -> <Compo> (barrel de composant)
+ *   components/<Cat>/<Compo>/fichier.ts    -> <Compo>
+ *   components/<Cat>/<Compo>/sous/...      -> <Compo>
+ *
+ * Un index.ts de catégorie n'est JAMAIS analysé comme un composant :
+ * c'est un barrel de ré-export. S'il est le seul fichier rattaché à la
+ * clé (catégorie à composants), l'entrée disparaît du classement.
  */
 function componentNameFor(relPath) {
   const parts = relPath.split(path.sep);
   if (parts[0] !== "components") return null;
-  if (parts.length >= 3) {
-    // parts[2] avec extension = fichier d'une catégorie plate -> catégorie
-    // parts[2] sans extension = dossier composant -> composant
-    return FILE_RE.test(parts[2]) ? parts[1] : parts[2];
-  }
-  if (parts.length === 2) {
-    // components/index.ts : barrel racine, ignoré
-    return FILE_RE.test(parts[1]) ? null : parts[1];
-  }
-  return null;
+
+  const fileName = parts[parts.length - 1];
+  const dirs = parts.slice(1, -1); // ex. ["formElements", "comboBox"]
+
+  if (dirs.length === 0) return null;  // components/index.ts
+  // Barrel de catégorie : ré-export pur, jamais un composant
+  if (dirs.length === 1 && fileName === "index.ts") return null;
+  if (dirs.length === 1) return dirs[0];       // catégorie plate
+  return dirs[dirs.length - 1];                // composant (niveau le plus profond)
 }
 
 /** Renvoie la catégorie d'appartenance d'un fichier sous components/. */
