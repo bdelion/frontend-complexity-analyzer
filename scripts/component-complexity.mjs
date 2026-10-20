@@ -8,11 +8,13 @@
  * Usage :      node scripts/component-complexity.mjs --src ./src --out ./complexity-report.json
  *
  * Principe :
- *   1. Parcourt les fichiers .ts/.tsx et regroupe par composant (dossier).
+ *   1. Parcourt les fichiers .ts/.tsx et regroupe par composant
+ *      (src/components/<Catégorie>/<Composant>/, ou catégorie plate).
  *   2. Extrait des métriques objectives via l'API TypeScript (AST).
- *   3. Construit le graphe de dépendances (fan-in / fan-out).
- *   4. Normalise chaque métrique sur 1-5, agrège avec des poids
- *      pondérés et produit un classement + tiers.
+ *   3. Construit le graphe de dépendances (fan-in / fan-out, modules
+ *      partagés).
+ *   4. Normalise chaque métrique sur 1-5, agrège avec des poids et
+ *      produit un classement + tiers (faible / moyenne / élevée).
  *
  * Sorties : JSON détaillé, table console, et Markdown prêt à coller
  * dans un README ou une page de documentation.
@@ -38,21 +40,24 @@ const CONFIG = {
   outFile: getArg("--out", "./complexity-report.json"),
   // Poids de l'agrégation (somme libre, normalisée automatiquement)
   weights: {
-    code: 0.35,        // complexité cyclomatique + LOC
-    interactions: 0.25,// handlers clavier/pointeur, hooks d'état
-    a11y: 0.30,        // densité ARIA (rôles, aria-*, focus management)
+    code: 0.35,         // complexité cyclomatique + LOC
+    interactions: 0.25, // handlers clavier/focus, hooks d'état
+    a11y: 0.30,         // densité ARIA (rôles, aria-*, focus management)
     structure: 0.10,    // dépendances (fan-out) + surface d'API (props)
   },
-  // Bornes de normalisation 1-5 par métrique (à calibrer sur votre lib)
+  // Bornes de normalisation 1-5 par métrique, calibrées sur les
+  // valeurs observées dans la librairie (rapport du 2026-10-20).
   bounds: {
-    cyclomatic: [5, 60],      // [simple, très complexe]
-    loc: [50, 600],
-    keyboardHandlers: [0, 8],
-    ariaCount: [2, 20],
-    hooks: [0, 15],
-    fanOut: [0, 8],
+    cyclomatic: [5, 100],      // observé : 3-113
+    loc: [50, 1200],           // observé : ~30-2000
+    keyboardHandlers: [0, 4],  // observé : 0-4
+    ariaCount: [0, 17],        // observé : 0-17
+    hooks: [0, 18],            // observé : 0-18
+    fanOut: [0, 9],            // observé : 0-9
     propsCount: [2, 25],
   },
+  // Seuils des tiers sur l'indice final (échelle 1-5)
+  tiers: { high: 3.5, medium: 2.2 },
 };
 
 /* ----------------------------------------------------------------- */
@@ -166,34 +171,42 @@ function analyzeFile(filePath) {
 /* Regroupement par composant                                         */
 /*                                                                   */
 /* Structure attendue :                                               */
-/*   src/components/<Categorie>/<ComponentName>/**  -> un composant    */
-/*   (si un dossier de catégorie contient directement les fichiers,    */
-/*    il est traité comme un composant unique)                        */
-/*   src/hooks|internal|contexts|...  -> infrastructure partagée       */
-/*     (exclue du classement, mais comptée dans le fan-out de chaque  */
-/*      composant qui en dépend)                                      */
+/*   src/components/<Catégorie>/<Composant>/**  -> un composant        */
+/*   src/components/<Catégorie>/** (plate)       -> un composant       */
+/*     (fichiers directement dans le dossier, index.ts inclus :        */
+/*      ré-exports et sous-fichiers sont rattachés à la catégorie)     */
+/*   Tout ce qui est hors src/components/** est traité comme          */
+/*   infrastructure partagée (hooks, internal, contexts, assets…) :   */
+/*   exclue du classement, mais comptée dans le fan-out de chaque      */
+/*   composant qui en dépend (clé "shared/<dir>").                    */
 /* ----------------------------------------------------------------- */
 
-const SHARED_DIRS = new Set(["hooks", "internal", "contexts", "assets", "toolkit", "commons", "utils", "helpers"]);
+/** Fichiers à exclure de l'analyse (tests). */
+const EXCLUDE_RE = /\.(e2e|test|spec)\.(ts|tsx)$/;
 
-/** Renvoie le nom du composant pour un fichier, ou null si infrastructure partagée. */
+/**
+ * Renvoie le nom du composant pour un fichier, ou null si le fichier
+ * n'appartient pas à src/components/** (infrastructure partagée).
+ */
 function componentNameFor(relPath) {
   const parts = relPath.split(path.sep);
-  if (parts[0] !== "components") return null; // hors src/components/** : shared
-  // src/components/<Categorie>/<Composant>/... -> <Composant>
-  if (parts.length >= 3) return parts[2];
-  // src/components/<Nom>/fichier.ts -> <Nom> (pas de niveau catégorie)
-  if (parts.length === 2) return parts[1];
+  if (parts[0] !== "components") return null;
+  // src/components/<Catégorie>/<Composant>/... -> <Composant>
+  // (index.ts d'une catégorie plate : rattaché à la catégorie, pas un
+  //  pseudo-composant)
+  if (parts.length >= 3 && parts[2] !== "index.ts") return parts[2];
+  // src/components/<Catégorie>/(index.ts|fichier.ts) -> <Catégorie>
+  if (parts.length >= 2) return parts[1];
   return null;
 }
 
-/** Renvoie la catégorie d'un composant (null si fichier d'index de catégorie). */
+/** Renvoie la catégorie d'appartenance d'un fichier sous components/. */
 function categoryFor(relPath) {
   const parts = relPath.split(path.sep);
-  return parts[0] === "components" ? parts[1] : null;
+  return parts[0] === "components" && parts.length >= 2 ? parts[1] : null;
 }
 
-/** Renvoie la clé de dépendance pour un import résolu (nom de composant, ou "shared/<dir>"). */
+/** Renvoie la clé de dépendance pour un import résolu. */
 function dependencyKeyFor(relPath) {
   const comp = componentNameFor(relPath);
   if (comp) return comp;
@@ -207,22 +220,23 @@ if (files.length === 0) {
   process.exit(1);
 }
 
-const components = new Map();   // name -> aggregated metrics (composants uniquement)
-const pendingFanIn = [];         // [cible, source] pour imports vers composants non encore visités
-const sharedUsage = new Map();  // composant -> Set de modules partagés utilisés
+const components = new Map();  // name -> métriques agrégées (composants uniquement)
+const pendingFanIn = [];       // [cible, source] pour imports vers composants non encore visités
+const sharedUsage = new Map(); // composant -> Set de modules partagés utilisés
 
 for (const file of files) {
+  if (EXCLUDE_RE.test(file)) continue; // tests e2e/unitaires exclus
   const rel = path.relative(CONFIG.srcDir, file);
   const componentName = componentNameFor(rel);
-  const m = analyzeFile(file);
-
   if (componentName === null) continue; // infrastructure partagée : pas un composant
 
+  const m = analyzeFile(file);
   const category = categoryFor(rel);
+
   if (!components.has(componentName)) {
     components.set(componentName, {
       name: componentName,
-      category: category && category !== componentName + ".ts" ? category : null,
+      category,
       files: 0, loc: 0, cyclomatic: 0, keyboardHandlers: 0,
       pointerHandlers: 0, ariaCount: 0, hooks: 0, propsCount: 0,
       importedBy: new Set(),
@@ -233,9 +247,10 @@ for (const file of files) {
     "pointerHandlers", "ariaCount", "hooks", "propsCount"]) {
     agg[k] += m[k];
   }
+
   // Fan-out : dépendances internes (autres composants + modules partagés)
-  agg.imports = (agg.imports || new Set());
-  sharedUsage.set(componentName, (sharedUsage.get(componentName) || new Set()));
+  agg.imports = agg.imports || new Set();
+  if (!sharedUsage.has(componentName)) sharedUsage.set(componentName, new Set());
   for (const imp of m.imports) {
     const relImp = path.relative(CONFIG.srcDir, imp);
     const target = dependencyKeyFor(relImp);
@@ -268,7 +283,13 @@ function norm(value, [min, max]) {
   return 1 + (4 * (clamped - min)) / (max - min); // échelle 1-5
 }
 
-  const rows = [];
+function tierFor(index) {
+  if (index >= CONFIG.tiers.high) return "élevée";
+  if (index >= CONFIG.tiers.medium) return "moyenne";
+  return "faible";
+}
+
+const rows = [];
 for (const c of components.values()) {
   const fanOut = c.imports ? c.imports.size : 0;
   const fanIn = c.importedBy.size;
@@ -298,7 +319,7 @@ for (const c of components.values()) {
     component: c.name,
     category: c.category || "",
     index: Math.round(index * 100) / 100,
-    tier: index >= 4 ? "élevée" : index >= 2.8 ? "moyenne" : "faible",
+    tier: tierFor(index),
     details: {
       files: c.files, loc: c.loc, cyclomatic: c.cyclomatic,
       keyboardHandlers: c.keyboardHandlers, hooks: c.hooks,
@@ -348,7 +369,10 @@ const md = [
     `| ${r.component} | ${r.category} | ${r.index} | ${r.tier} | ${r.details.cyclomatic} | ${r.details.loc} | ${r.details.ariaCount} | ${r.details.keyboardHandlers} | ${r.details.propsCount} | ${r.details.fanOut} |`
   ),
 ].join("\n");
-fs.writeFileSync(path.join(path.dirname(CONFIG.outFile) || ".", "complexity-report.md"), md, "utf8");
+fs.writeFileSync(
+  path.join(path.dirname(CONFIG.outFile) || ".", "complexity-report.md"),
+  md, "utf8"
+);
 
 console.log(`\n✔ Rapport JSON : ${CONFIG.outFile}`);
-console.log(`✔ Table Markdown : complexity-report.md`);
+console.log(`✔ Table Markdown : ${path.join(path.dirname(CONFIG.outFile) || ".", "complexity-report.md")}`);
