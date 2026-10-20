@@ -425,7 +425,7 @@ rows.sort((a, b) => b.index - a.index);
 /* ----------------------------------------------------------------- */
 /* Estimation de charge (--effort)                                     */
 /*                                                                   */
-/* Principe : calibrer une relation indice -> jours sur des durées     */
+/* Principe : calibrer la relation indice -> jours sur des durées     */
 /* RÉELLES constatées sur quelques composants (points d'ancrage),     */
 /* puis extrapoler à l'ensemble du classement.                        */
 /*                                                                   */
@@ -433,15 +433,28 @@ rows.sort((a, b) => b.index - a.index);
 /*   --effort '{"comboBox":6,"tabs":3,"button":1}'                    */
 /*   --effort ./effort-anchors.json   (même format, un objet)        */
 /*                                                                   */
-/* Modèles testés, meilleur R² retenu :                                */
-/*   - linéaire  : jours = a * indice + b                             */
-/*   - puissance : jours = a * indice ^ b   (ajustement log-log)       */
+/* Modèle : interpolation linéaire par morceaux. Les ancres, triées    */
+/* par indice croissant, délimitent des segments ; l'estimation        */
+/* interpole entre les deux ancres voisines. Contrairement à une      */
+/* régression globale, ce modèle passe EXACTEMENT par chaque ancre :  */
+/* le réel et l'estimé coïncident pour tous les composants fournis.   */
+/* Hors domaine (indice < première ancre ou > dernière), on extrapole */
+/* avec la pente globale (première -> dernière ancre) : plus robuste   */
+/* que la pente du segment extrême, très raide si deux ancres sont    */
+/* voisines en indice mais éloignées en jours.                        */
+/*                                                                   */
+/* Cas particuliers :                                                 */
+/*   - 1 ancre      : durée constante (avec avertissement).           */
+/*   - 2 ancres     : droite passant par les deux points.             */
+/*   - indices égaux avec jours différents : fit impossible, on       */
+/*     prend la moyenne et on avertit (l'indice seul ne suffit pas    */
+/*     à les distinguer).                                            */
 /*                                                                   */
 /* Fiabilité : avec < 4 ancres, l'estimation est indicative ;         */
 /* 4 à 6 ancres réparties sur l'échelle (1 très simple, 1-2 moyens,   */
 /* 1-2 complexes, idéalement 1 très complexe) donnent une base        */
-/* solide. Le rapport expose le R² et les résidus par ancre pour      */
-/* juger de la qualité de l'ajustement.                              */
+/* solide. Le rapport liste chaque ancre (réel = estimé) pour         */
+/* vérification.                                                     */
 /* ----------------------------------------------------------------- */
 
 function parseEffortArg(raw) {
@@ -459,40 +472,33 @@ function parseEffortArg(raw) {
   return Object.keys(out).length > 0 ? out : null;
 }
 
-function fitLinear(xs, ys) {
-  const n = xs.length;
-  const mx = xs.reduce((s, v) => s + v, 0) / n;
-  const my = ys.reduce((s, v) => s + v, 0) / n;
-  let num = 0, den = 0;
-  for (let i = 0; i < n; i++) {
-    num += (xs[i] - mx) * (ys[i] - my);
-    den += (xs[i] - mx) ** 2;
+/**
+ * Interpolation linéaire par morceaux sur des points (x, y) triés par x.
+ * Hors domaine : prolongation de la corde globale (première -> dernière
+ * ancre), plus stable que le segment extrême quand deux ancres sont
+ * voisines en indice mais éloignées en jours.
+ * Renvoie null si les x ne sont pas uniques (fit ambigu).
+ */
+function buildInterpolator(points) {
+  // points : [{ x, y }] triés par x croissant
+  const n = points.length;
+  if (n === 0) return null;
+  if (n === 1) return { segments: null, constant: points[0].y };
+  for (let i = 1; i < n; i++) {
+    if (points[i].x === points[i - 1].x) return null; // x dupliqués
   }
-  const a = den === 0 ? 0 : num / den;
-  const b = my - a * mx;
-  const predict = (x) => a * x + b;
-  return { type: "linear", a, b, predict };
-}
-
-function fitPower(xs, ys) {
-  // jours = a * indice^b  <=>  ln(jours) = ln(a) + b * ln(indice)
-  const lx = xs.map((x) => Math.log(x));
-  const ly = ys.map((y) => Math.log(y));
-  const lin = fitLinear(lx, ly);
-  const a = Math.exp(lin.b);
-  const b = lin.a;
-  const predict = (x) => a * x ** b;
-  return { type: "power", a, b, predict };
-}
-
-function r2Of(model, xs, ys) {
-  const my = ys.reduce((s, v) => s + v, 0) / ys.length;
-  let ssRes = 0, ssTot = 0;
-  for (let i = 0; i < xs.length; i++) {
-    ssRes += (ys[i] - model.predict(xs[i])) ** 2;
-    ssTot += (ys[i] - my) ** 2;
-  }
-  return ssTot === 0 ? 1 : 1 - ssRes / ssTot;
+  const slope = (i) => (points[i].y - points[i - 1].y) / (points[i].x - points[i - 1].x);
+  const globalSlope = (points[n - 1].y - points[0].y) / (points[n - 1].x - points[0].x);
+  const predict = (x) => {
+    if (x <= points[0].x) return points[0].y + globalSlope * (x - points[0].x);
+    if (x >= points[n - 1].x) return points[n - 1].y + globalSlope * (x - points[n - 1].x);
+    // Interpolation stricte : segment [i-1, i] tel que x(i-1) <= x < x(i)
+    for (let i = 1; i < n; i++) {
+      if (x < points[i].x) return points[i - 1].y + slope(i) * (x - points[i - 1].x);
+    }
+    return points[n - 1].y; // x exactement égal au dernier point
+  };
+  return { segments: n - 1, constant: null, predict };
 }
 
 let effort = null;
@@ -504,44 +510,63 @@ if (effortRaw) {
     process.exit(1);
   }
   const indexByName = new Map(rows.map((r) => [r.component.toLowerCase(), r]));
-  const xs = [], ys = [], missing = [];
+  const missing = [];
+  const anchorPoints = []; // { name, x, days }
   for (const [name, days] of Object.entries(anchors)) {
     const row = indexByName.get(name.toLowerCase());
     if (!row) { missing.push(name); continue; }
-    xs.push(row.index);
-    ys.push(Number(days));
+    anchorPoints.push({ name, x: row.index, days: Number(days) });
   }
   if (missing.length > 0) {
     console.warn(`⚠ Ancres inconnues (absentes du rapport) : ${missing.join(", ")}`);
   }
-  if (xs.length < 2) {
-    console.error("✖ --effort : au moins 2 ancres valides sont nécessaires pour calibrer un modèle.");
+  if (anchorPoints.length < 1) {
+    console.error("✖ --effort : au moins 1 ancre valide est nécessaire.");
     process.exit(1);
   }
-  if (xs.length < 4) {
-    console.warn(`⚠ Seulement ${xs.length} ancres : estimation indicative. Visez 4-6 ancres réparties sur l'échelle de complexité.`);
+  if (anchorPoints.length < 4) {
+    console.warn(`⚠ Seulement ${anchorPoints.length} ancre(s) : estimation indicative. Visez 4-6 ancres réparties sur l'échelle de complexité.`);
   }
 
-  const models = [fitLinear(xs, ys)];
-  if (xs.every((x) => x > 0) && ys.every((y) => y > 0)) models.push(fitPower(xs, ys));
-  const best = models.reduce((m, cand) => (r2Of(cand, xs, ys) > r2Of(m, xs, ys) ? cand : m));
+  anchorPoints.sort((a, b) => a.x - b.x || a.days - b.days);
+
+  // Ancres avec le même indice mais des jours différents : la relation
+  // indice -> jours est ambiguë ; on moyenne et on avertit.
+  const deduped = [];
+  for (const p of anchorPoints) {
+    const last = deduped[deduped.length - 1];
+    if (last && last.x === p.x) {
+      const same = anchorPoints.filter((q) => q.x === p.x);
+      if (last.merged !== true) {
+        console.warn(`⚠ Ancres au même indice (${p.x}) avec des jours différents (${same.map((q) => `${q.name}=${q.days}`).join(", ")}) : moyenne utilisée.`);
+        last.merged = true;
+      }
+      last.days = same.reduce((s, q) => s + q.days, 0) / same.length;
+    } else {
+      deduped.push({ ...p });
+    }
+  }
+
+  const interp = buildInterpolator(deduped.map((p) => ({ x: p.x, y: p.days })));
+  if (!interp) {
+    console.error("✖ --effort : ancres incohérentes (indices identiques, jours différents) — impossible de faire passer le modèle par tous les points.");
+    process.exit(1);
+  }
+  if (interp.constant !== null) {
+    console.warn(`⚠ Une seule ancre (indice ${deduped[0].x} -> ${deduped[0].days} j) : durée constante appliquée à tous les composants.`);
+  }
 
   effort = {
-    model: best.type,
-    r2: Math.round(r2Of(best, xs, ys) * 1000) / 1000,
+    model: interp.constant !== null ? "constant" : "piecewise-linear",
+    segments: interp.segments,
     anchors: Object.fromEntries(
-      Object.entries(anchors)
-        .filter(([n]) => !missing.includes(n))
-        .map(([n, d]) => {
-          const row = indexByName.get(n.toLowerCase());
-          return [n, { days: d, estimated: Math.round(best.predict(row.index) * 10) / 10 }];
-        })
+      anchorPoints.map((p) => [p.name, { days: p.days, estimated: Math.round(interp.predict(p.x) * 10) / 10 }])
     ),
-    anchorsCount: xs.length,
+    anchorsCount: anchorPoints.length,
   };
 
   for (const r of rows) {
-    const raw = Math.max(0, best.predict(r.index)); // plancher 0
+    const raw = Math.max(0, interp.predict(r.index)); // plancher 0
     r.estimatedDays = Math.round(raw * 10) / 10;
   }
   effort.totalDays = Math.round(rows.reduce((s, r) => s + r.estimatedDays, 0) * 10) / 10;
@@ -582,7 +607,10 @@ console.table(
   }))
 );
 if (effort) {
-  console.log(`\nCharge estimée (modèle ${effort.model}, R² = ${effort.r2}, ${effort.anchorsCount} ancres)`);
+  const modelLabel = effort.model === "constant"
+    ? "constante"
+    : `interpolation par morceaux, ${effort.segments} segment(s)`;
+  console.log(`\nCharge estimée (modèle : ${modelLabel}, ${effort.anchorsCount} ancres)`);
   console.log(`  Total : ${effort.totalDays} jours — Moyenne : ${effort.meanDays} jours/composant`);
   for (const [name, a] of Object.entries(effort.anchors)) {
     console.log(`  Ancre ${name} : réel ${a.days} j / estimé ${a.estimated} j`);
@@ -598,7 +626,7 @@ const md = [
   ),
   ...(effort ? [
     "",
-    `**Charge totale estimée : ${effort.totalDays} jours** (modèle ${effort.model}, R² = ${effort.r2}, ${effort.anchorsCount} ancres réelles).`,
+    `**Charge totale estimée : ${effort.totalDays} jours** (modèle : ${effort.model === "constant" ? "constante" : `interpolation par morceaux, ${effort.segments} segment(s)`}, ${effort.anchorsCount} ancres réelles).`,
   ] : []),
 ].join("\n");
 fs.writeFileSync(
