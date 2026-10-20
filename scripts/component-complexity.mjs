@@ -164,6 +164,15 @@ function analyzeFile(filePath) {
   };
   visit(sf);
 
+  // Barrel : fichier ne contenant QUE des imports / re-exports.
+  // (export const X = ... est un VariableStatement : du vrai code,
+  //  donc un composant écrit entièrement dans index.tsx reste analysé.)
+  m.isBarrel = sf.statements.length > 0 && sf.statements.every((st) =>
+    ts.isImportDeclaration(st) ||
+    ts.isExportDeclaration(st) ||
+    st.kind === ts.SyntaxKind.ExportAssignment
+  );
+
   return m;
 }
 
@@ -189,31 +198,26 @@ const EXCLUDE_RE = /\.(e2e|test|spec)\.(ts|tsx)$/;
  * n'appartient pas à src/components/** (infrastructure partagée).
  *
  * Règles (relatif à src/) :
- *   components/index.ts                    -> null (barrel racine)
- *   components/<Cat>/index.ts              -> <Cat> (barrel : fusionné dans la
- *                                            catégorie plate, ou ignoré si la
- *                                            catégorie contient des composants)
- *   components/<Cat>/fichier.ts            -> <Cat> (catégorie plate)
- *   components/<Cat>/<Compo>/index.ts      -> <Compo> (barrel de composant)
- *   components/<Cat>/<Compo>/fichier.ts    -> <Compo>
- *   components/<Cat>/<Compo>/sous/...      -> <Compo>
+ *   components/index.ts                  -> null (barrel racine)
+ *   components/<Cat>/<fichier>           -> <Cat> (catégorie plate fusionnée)
+ *   components/<Cat>/<Compo>/<fichier>   -> <Compo> (index.ts compris)
  *
- * Un index.ts de catégorie n'est JAMAIS analysé comme un composant :
- * c'est un barrel de ré-export. S'il est le seul fichier rattaché à la
- * clé (catégorie à composants), l'entrée disparaît du classement.
+ * Les barrels (fichiers ne contenant que des imports/re-exports) sont
+ * détectés par analyse du contenu, pas par le nom : voir analyzeFile.
+ * Un barrel de catégorie est ignoré ; un barrel de composant ne
+ * contribue qu'au graphe de dépendances (métriques nulles).
  */
 function componentNameFor(relPath) {
   const parts = relPath.split(path.sep);
   if (parts[0] !== "components") return null;
 
-  const fileName = parts[parts.length - 1];
   const dirs = parts.slice(1, -1); // ex. ["formElements", "comboBox"]
 
-  if (dirs.length === 0) return null;  // components/index.ts
-  // Barrel de catégorie : ré-export pur, jamais un composant
-  if (dirs.length === 1 && fileName === "index.ts") return null;
-  if (dirs.length === 1) return dirs[0];       // catégorie plate
-  return dirs[dirs.length - 1];                // composant (niveau le plus profond)
+  if (dirs.length === 0) return null; // components/index.ts
+  if (dirs.length === 1) return dirs[0]; // catégorie plate (ou fichiers
+                                          // racine d'une catégorie : composant
+                                          // principal de la catégorie)
+  return dirs[dirs.length - 1]; // composant (niveau le plus profond)
 }
 
 /** Renvoie la catégorie d'appartenance d'un fichier sous components/. */
@@ -248,6 +252,18 @@ for (const file of files) {
 
   const m = analyzeFile(file);
   const category = categoryFor(rel);
+  const dirs = rel.split(path.sep).slice(1, -1);
+
+  if (m.isBarrel && dirs.length <= 1) {
+    // Barrel de catégorie ou racine (ex. components/buttons/index.ts) :
+    // ré-export pur, ignoré — ni métriques ni entrée fantôme.
+    continue;
+  }
+  if (m.isBarrel) {
+    // Barrel de composant (ex. components/<cat>/comboBox/index.ts) :
+    // seul son graphe d'imports compte ; métriques neutralisées.
+    m.files = 0; m.loc = 0; m.cyclomatic = 0;
+  }
 
   if (!components.has(componentName)) {
     components.set(componentName, {
