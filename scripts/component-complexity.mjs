@@ -184,19 +184,30 @@ function analyzeFile(filePath) {
 /** Fichiers à exclure de l'analyse (tests). */
 const EXCLUDE_RE = /\.(e2e|test|spec)\.(ts|tsx)$/;
 
+const FILE_RE = /\.(ts|tsx)$/;
+
 /**
  * Renvoie le nom du composant pour un fichier, ou null si le fichier
  * n'appartient pas à src/components/** (infrastructure partagée).
+ *
+ *   components/<Cat>/<Compo>/fichier.ts  -> <Compo>
+ *   components/<Cat>/<Compo>/index.ts    -> <Compo> (barrel du composant)
+ *   components/<CatPlat>/fichier.ts      -> <CatPlat> (catégorie plate)
+ *   components/<CatPlat>/index.ts        -> <CatPlat>
+ *   components/index.ts                  -> null (barrel racine)
  */
 function componentNameFor(relPath) {
   const parts = relPath.split(path.sep);
   if (parts[0] !== "components") return null;
-  // src/components/<Catégorie>/<Composant>/... -> <Composant>
-  // (index.ts d'une catégorie plate : rattaché à la catégorie, pas un
-  //  pseudo-composant)
-  if (parts.length >= 3 && parts[2] !== "index.ts") return parts[2];
-  // src/components/<Catégorie>/(index.ts|fichier.ts) -> <Catégorie>
-  if (parts.length >= 2) return parts[1];
+  if (parts.length >= 3) {
+    // parts[2] avec extension = fichier d'une catégorie plate -> catégorie
+    // parts[2] sans extension = dossier composant -> composant
+    return FILE_RE.test(parts[2]) ? parts[1] : parts[2];
+  }
+  if (parts.length === 2) {
+    // components/index.ts : barrel racine, ignoré
+    return FILE_RE.test(parts[1]) ? null : parts[1];
+  }
   return null;
 }
 
