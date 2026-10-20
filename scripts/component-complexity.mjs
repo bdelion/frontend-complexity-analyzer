@@ -163,8 +163,31 @@ function analyzeFile(filePath) {
 }
 
 /* ----------------------------------------------------------------- */
-/* Regroupement par composant : dossier de premier niveau sous src     */
+/* Regroupement par composant                                         */
+/*                                                                   */
+/* Structure attendue :                                               */
+/*   src/components/<ComponentName>/**  -> un composant               */
+/*   src/hooks|internal|contexts|...    -> infrastructure partagée     */
+/*     (exclue du classement, mais comptée dans le fan-out de chaque  */
+/*      composant qui en dépend)                                      */
 /* ----------------------------------------------------------------- */
+
+const SHARED_DIRS = new Set(["hooks", "internal", "contexts", "assets", "toolkit", "commons", "utils", "helpers"]);
+
+/** Renvoie le nom du composant pour un fichier, ou null si infrastructure partagée. */
+function componentNameFor(relPath) {
+  const parts = relPath.split(path.sep);
+  if (parts.length >= 2 && parts[0] === "components") return parts[1];
+  return null; // hors src/components/** : shared
+}
+
+/** Renvoie la clé de dépendance pour un import résolu (nom de composant, ou "shared/<dir>"). */
+function dependencyKeyFor(relPath) {
+  const comp = componentNameFor(relPath);
+  if (comp) return comp;
+  const parts = relPath.split(path.sep);
+  return "shared/" + parts[0];
+}
 
 const files = walk(CONFIG.srcDir);
 if (files.length === 0) {
@@ -172,13 +195,17 @@ if (files.length === 0) {
   process.exit(1);
 }
 
-const components = new Map(); // name -> aggregated metrics
-const pendingFanIn = [];       // [cible, source] pour imports vers composants non encore visités
+const components = new Map();   // name -> aggregated metrics (composants uniquement)
+const pendingFanIn = [];         // [cible, source] pour imports vers composants non encore visités
+const sharedUsage = new Map();  // composant -> Set de modules partagés utilisés
 
 for (const file of files) {
   const rel = path.relative(CONFIG.srcDir, file);
-  const componentName = rel.split(path.sep)[0].replace(/\.(ts|tsx)$/, "");
+  const componentName = componentNameFor(rel);
   const m = analyzeFile(file);
+
+  if (componentName === null) continue; // infrastructure partagée : pas un composant
+
   if (!components.has(componentName)) {
     components.set(componentName, {
       name: componentName,
@@ -192,12 +219,17 @@ for (const file of files) {
     "pointerHandlers", "ariaCount", "hooks", "propsCount"]) {
     agg[k] += m[k];
   }
-  // Fan-out : dépendances internes
+  // Fan-out : dépendances internes (autres composants + modules partagés)
   agg.imports = (agg.imports || new Set());
+  sharedUsage.set(componentName, (sharedUsage.get(componentName) || new Set()));
   for (const imp of m.imports) {
-    const target = path.relative(CONFIG.srcDir, imp).split(path.sep)[0];
-    if (target && target !== componentName) {
-      agg.imports.add(target);
+    const relImp = path.relative(CONFIG.srcDir, imp);
+    const target = dependencyKeyFor(relImp);
+    if (!target || target === componentName) continue;
+    agg.imports.add(target);
+    if (target.startsWith("shared/")) {
+      sharedUsage.get(componentName).add(target);
+    } else {
       const dep = components.get(target);
       if (dep) dep.importedBy.add(componentName);
       // cible non encore visitée : file d'attente pour le fan-in
@@ -222,10 +254,11 @@ function norm(value, [min, max]) {
   return 1 + (4 * (clamped - min)) / (max - min); // échelle 1-5
 }
 
-const rows = [];
+  const rows = [];
 for (const c of components.values()) {
   const fanOut = c.imports ? c.imports.size : 0;
   const fanIn = c.importedBy.size;
+  const sharedDeps = sharedUsage.get(c.name) ? sharedUsage.get(c.name).size : 0;
 
   const codeScore = (
     0.6 * norm(c.cyclomatic, CONFIG.bounds.cyclomatic) +
@@ -255,7 +288,7 @@ for (const c of components.values()) {
       files: c.files, loc: c.loc, cyclomatic: c.cyclomatic,
       keyboardHandlers: c.keyboardHandlers, hooks: c.hooks,
       ariaCount: c.ariaCount, propsCount: c.propsCount,
-      fanOut, fanIn,
+      fanOut, fanIn, sharedDeps,
       subScores: {
         code: Math.round(codeScore * 100) / 100,
         interactions: Math.round(interactionScore * 100) / 100,
