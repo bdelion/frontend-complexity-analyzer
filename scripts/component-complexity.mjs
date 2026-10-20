@@ -124,7 +124,8 @@ function analyzeFile(filePath) {
     pointerHandlers: 0,
     ariaCount: 0,
     hooks: 0,
-    propsCount: 0,
+    propsFromTypes: 0,
+    propsFromBindings: 0,
     imports: [],
   };
 
@@ -156,9 +157,26 @@ function analyzeFile(filePath) {
       if (STATE_HOOKS_RE.test(expr)) m.hooks += 1;
     }
 
-    // Surface d'API : membres d'interfaces Props/OwnProps
-    if (ts.isInterfaceDeclaration(node) && /Props|Options|Config/i.test(node.name.text)) {
-      m.propsCount += node.members.length;
+    // Surface d'API : props déclarées en interface OU en alias de type
+    // (type XProps = { ... }), destructurées en signature de composant.
+    // Les deux sources ne s'additionnent pas : la déclaration de type
+    // (surface complète) est préférée ; la destructuration (sous-
+    // ensemble) ne sert que de repli si aucune n'est trouvée.
+    if (ts.isInterfaceDeclaration(node) && /Props|Options|Config|Attributes|Params/i.test(node.name.text)) {
+      m.propsFromTypes += node.members.length;
+    }
+    if (ts.isTypeAliasDeclaration(node) &&
+        /Props|Options|Config|Attributes|Params/i.test(node.name.text) &&
+        ts.isTypeLiteralNode(node.type)) {
+      m.propsFromTypes += node.type.members.length;
+    }
+    // Props destructurées : function X({ a, b, ...rest }: Props) —
+    // compte les éléments du binding pattern du premier paramètre des
+    // fonctions/composants du fichier.
+    if ((ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node) || ts.isArrowFunction(node)) &&
+        node.parameters.length > 0 &&
+        ts.isObjectBindingPattern(node.parameters[0].name)) {
+      m.propsFromBindings += node.parameters[0].name.elements.length;
     }
 
     // Imports résolus (relatifs uniquement = interne à la lib)
@@ -179,6 +197,10 @@ function analyzeFile(filePath) {
     ts.isExportDeclaration(st) ||
     st.kind === ts.SyntaxKind.ExportAssignment
   );
+
+  // Surface d'API retenue : déclaration de type si présente, sinon
+  // destructuration observée en signature.
+  m.propsCount = m.propsFromTypes > 0 ? m.propsFromTypes : m.propsFromBindings;
 
   return m;
 }
@@ -560,15 +582,26 @@ if (effortRaw) {
     model: interp.constant !== null ? "constant" : "piecewise-linear",
     segments: interp.segments,
     anchors: Object.fromEntries(
-      anchorPoints.map((p) => [p.name, { days: p.days, estimated: Math.round(interp.predict(p.x) * 10) / 10 }])
+      anchorPoints.map((p) => [p.name, {
+        index: p.x,
+        days: p.days,
+        estimated: Math.round(interp.predict(p.x) * 10) / 10,
+      }])
     ),
     anchorsCount: anchorPoints.length,
   };
 
+  // Domaine couvert par les ancres : en dehors, l'estimation est une
+  // extrapolation (corde globale), moins fiable qu'une interpolation.
+  const anchorMinX = Math.min(...deduped.map((p) => p.x));
+  const anchorMaxX = Math.max(...deduped.map((p) => p.x));
+
   for (const r of rows) {
     const raw = Math.max(0, interp.predict(r.index)); // plancher 0
     r.estimatedDays = Math.round(raw * 10) / 10;
+    r.effortBasis = (r.index < anchorMinX || r.index > anchorMaxX) ? "extrapolated" : "interpolated";
   }
+  effort.extrapolatedCount = rows.filter((r) => r.effortBasis === "extrapolated").length;
   effort.totalDays = Math.round(rows.reduce((s, r) => s + r.estimatedDays, 0) * 10) / 10;
   effort.meanDays = Math.round((effort.totalDays / rows.length) * 10) / 10;
 }
@@ -599,7 +632,7 @@ console.table(
     Composant: r.component,
     Indice: r.index,
     Pct: `${r.percentile}%`,
-    ...(r.estimatedDays !== undefined ? { Jours: r.estimatedDays } : {}),
+    ...(r.estimatedDays !== undefined ? { Jours: `${r.estimatedDays}${r.effortBasis === "extrapolated" ? "*" : ""}` } : {}),
     Code: r.details.subScores.code,
     Interac: r.details.subScores.interactions,
     A11y: r.details.subScores.a11y,
@@ -612,6 +645,7 @@ if (effort) {
     : `interpolation par morceaux, ${effort.segments} segment(s)`;
   console.log(`\nCharge estimée (modèle : ${modelLabel}, ${effort.anchorsCount} ancres)`);
   console.log(`  Total : ${effort.totalDays} jours — Moyenne : ${effort.meanDays} jours/composant`);
+  console.log(`  * estimation extrapolée (hors domaine des ancres) : ${effort.extrapolatedCount} composant(s)`);
   for (const [name, a] of Object.entries(effort.anchors)) {
     console.log(`  Ancre ${name} : réel ${a.days} j / estimé ${a.estimated} j`);
   }
@@ -622,11 +656,13 @@ const md = [
   `| Rang | Composant | Catégorie | Indice /5 | Percentile |${effort ? " Jours estimés |" : ""} Cyclomatic | LOC | ARIA | Clavier | Props | Fan-out |`,
   `|---|---|---|---|---|${effort ? "---|" : ""}---|---|---|---|---|---|`,
   ...rows.map((r) =>
-    `| ${r.rank} | ${r.component} | ${r.category} | ${r.index} | ${r.percentile}% |${effort ? ` ${r.estimatedDays} |` : ""} ${r.details.cyclomatic} | ${r.details.loc} | ${r.details.ariaCount} | ${r.details.keyboardHandlers} | ${r.details.propsCount} | ${r.details.fanOut} |`
+    `| ${r.rank} | ${r.component} | ${r.category} | ${r.index} | ${r.percentile}% |${effort ? ` ${r.estimatedDays}${r.effortBasis === "extrapolated" ? "\\*" : ""} |` : ""} ${r.details.cyclomatic} | ${r.details.loc} | ${r.details.ariaCount} | ${r.details.keyboardHandlers} | ${r.details.propsCount} | ${r.details.fanOut} |`
   ),
   ...(effort ? [
     "",
     `**Charge totale estimée : ${effort.totalDays} jours** (modèle : ${effort.model === "constant" ? "constante" : `interpolation par morceaux, ${effort.segments} segment(s)`}, ${effort.anchorsCount} ancres réelles).`,
+    "",
+    `\\* Estimation extrapolée (hors domaine couvert par les ancres) : ${effort.extrapolatedCount} composant(s), à considérer avec prudence.`,
   ] : []),
 ].join("\n");
 fs.writeFileSync(
