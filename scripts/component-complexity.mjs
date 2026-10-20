@@ -216,12 +216,13 @@ function analyzeFile(filePath) {
 /*     (fichiers directement dans le dossier, index.ts inclus :        */
 /*      ré-exports et sous-fichiers sont rattachés à la catégorie)     */
 /*   Tout ce qui est hors src/components/** (contexts, hooks,        */
-/*   internal, utils…) forme une unité partagée par dossier racine   */
-/*   (ex. src/hooks/** -> "hooks"), classée et estimée comme un      */
-/*   composant (catégorie "shared"). Les dépendances d'un composant   */
-/*   vers ces unités comptent dans son fan-out ET dans son           */
-/*   sharedDeps ; les barrels partagés (ex. src/hooks/index.ts) ne   */
-/*   contribuent qu'au graphe de dépendances.                        */
+/*   internal, toolkit…) forme des unités partagées par dossier le    */
+/*   plus profond, nommées par leur chemin relatif (ex. src/contexts/ */
+/*   a11yMessages/** -> "contexts/a11yMessages"), classées et        */
+/*   estimées comme des composants (catégorie "shared"). Les          */
+/*   dépendances d'un composant vers ces unités comptent dans son     */
+/*   fan-out ET dans son sharedDeps ; les barrels d'unité (ex. src/   */
+/*   hooks/index.ts) ne contribuent qu'au graphe de dépendances.      */
 /* ----------------------------------------------------------------- */
 
 /** Fichiers à exclure de l'analyse (tests). */
@@ -232,7 +233,11 @@ const EXCLUDE_RE = /\.(e2e|test|spec)\.(ts|tsx)$/;
  * racine (components/index.ts).
  *
  * Règles (relatif à src/) :
- *   <dir>/<fichier>                     -> <dir> (unité partagée, hors components)
+ *   <dossiers>/<fichier> (hors components) -> "<dossiers>" (unité
+ *                                           partagée, dossier le plus
+ *                                           profond, ex. src/contexts/
+ *                                           a11yMessages/x.tsx ->
+ *                                           "contexts/a11yMessages")
  *   <fichier> à la racine de src/       -> <fichier> sans extension (unité propre)
  *   components/index.ts                  -> null (barrel racine)
  *   components/<Cat>/<fichier>           -> <Cat> (catégorie plate fusionnée)
@@ -259,14 +264,17 @@ const EXCLUDE_RE = /\.(e2e|test|spec)\.(ts|tsx)$/;
 function componentNameFor(relPath) {
   const parts = relPath.split(path.sep);
   if (parts[0] !== "components") {
-    // Infrastructure partagée (contexts, hooks, internal, utils…) :
-    // incluse dans le classement comme une unité à part entière,
-    // nommée d'après son dossier racine sous src/ (ex. src/hooks/**
-    // -> "hooks"). Un fichier directement à la racine de src/ forme
-    // sa propre unité (nom de fichier sans extension).
-    return parts.length === 1
+    // Infrastructure partagée (contexts, hooks, internal, toolkit…) :
+    // incluse dans le classement comme des unités à part entières.
+    // Granularité : le DOSSIER LE PLUS PROFOND, nommé par son chemin
+    // complet relatif à src/ (ex. src/contexts/a11yMessages/** ->
+    // "contexts/a11yMessages") pour éviter les collisions entre
+    // arborescences (ex. src/hooks vs src/internal/hooks). Un fichier
+    // directement à la racine de src/ forme sa propre unité.
+    const dirs = parts.slice(0, -1);
+    return dirs.length === 0
       ? parts[0].replace(/\.(ts|tsx)$/, "")
-      : parts[0];
+      : dirs.join("/");
   }
 
   const dirs = parts.slice(1, -1); // ex. ["formElements", "comboBox"]
