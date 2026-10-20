@@ -14,7 +14,8 @@
  *   3. Construit le graphe de dépendances (fan-in / fan-out, modules
  *      partagés).
  *   4. Normalise chaque métrique sur 1-5, agrège avec des poids et
- *      produit un classement + tiers (faible / moyenne / élevée).
+ *      produit un classement continu : indice pondéré + rang centile
+ *      (pas de tiers, pas d'effet de frontière).
  *
  * Sorties : JSON détaillé, table console, et Markdown prêt à coller
  * dans un README ou une page de documentation.
@@ -56,8 +57,9 @@ const CONFIG = {
     fanOut: [0, 9],            // observé : 0-9
     propsCount: [2, 25],
   },
-  // Seuils des tiers sur l'indice final (échelle 1-5)
-  tiers: { high: 3.5, medium: 2.2 },
+  // Pas de seuils de tier : le classement est continu.
+  // Chaque composant reçoit son rang (1 = plus complexe) et son
+  // percentile (0-100 : part des composants moins complexes que lui).
 };
 
 /* ----------------------------------------------------------------- */
@@ -350,10 +352,17 @@ function norm(value, [min, max]) {
   return 1 + (4 * (clamped - min)) / (max - min); // échelle 1-5
 }
 
-function tierFor(index) {
-  if (index >= CONFIG.tiers.high) return "élevée";
-  if (index >= CONFIG.tiers.medium) return "moyenne";
-  return "faible";
+function percentileFor(sortedValues, value) {
+  // Part (0-100) des composants strictement moins complexes.
+  let below = 0;
+  for (const v of sortedValues) {
+    if (v < value) below++;
+    else break;
+  }
+  // 0.5 pour les ex æquo : moyenne des positions possibles
+  let equal = 0;
+  for (const v of sortedValues) if (v === value) equal++;
+  return Math.round(((below + 0.5 * (equal - 1)) / (sortedValues.length - 1)) * 100);
 }
 
 const rows = [];
@@ -386,7 +395,7 @@ for (const c of components.values()) {
     component: c.name,
     category: c.category || "",
     index: Math.round(index * 100) / 100,
-    tier: tierFor(index),
+    percentile: 0, // calculé après le tri
     details: {
       files: c.files, loc: c.loc, cyclomatic: c.cyclomatic,
       keyboardHandlers: c.keyboardHandlers, hooks: c.hooks,
@@ -404,6 +413,14 @@ for (const c of components.values()) {
 
 rows.sort((a, b) => b.index - a.index);
 
+/* Rang (1 = plus complexe) et percentile, calculés après le tri.
+ * Le percentile se lit : "X % des composants sont moins complexes". */
+const sortedValues = rows.map((r) => r.index);
+rows.forEach((r, i) => {
+  r.rank = i + 1;
+  r.percentile = percentileFor(sortedValues, r.index);
+});
+
 /* ----------------------------------------------------------------- */
 /* Sorties : JSON, console, Markdown                                   */
 /* ----------------------------------------------------------------- */
@@ -420,7 +437,7 @@ console.table(
   rows.map((r) => ({
     Composant: r.component,
     Indice: r.index,
-    Tier: r.tier,
+    Pct: `${r.percentile}%`,
     Code: r.details.subScores.code,
     Interac: r.details.subScores.interactions,
     A11y: r.details.subScores.a11y,
@@ -430,10 +447,10 @@ console.table(
 
 const md = [
   "## Indice de complexité des composants\n",
-  "| Composant | Catégorie | Indice /5 | Tier | Cyclomatic | LOC | ARIA | Clavier | Props | Fan-out |",
-  "|---|---|---|---|---|---|---|---|---|---|",
+  "| Rang | Composant | Catégorie | Indice /5 | Percentile | Cyclomatic | LOC | ARIA | Clavier | Props | Fan-out |",
+  "|---|---|---|---|---|---|---|---|---|---|---|",
   ...rows.map((r) =>
-    `| ${r.component} | ${r.category} | ${r.index} | ${r.tier} | ${r.details.cyclomatic} | ${r.details.loc} | ${r.details.ariaCount} | ${r.details.keyboardHandlers} | ${r.details.propsCount} | ${r.details.fanOut} |`
+    `| ${r.rank} | ${r.component} | ${r.category} | ${r.index} | ${r.percentile}% | ${r.details.cyclomatic} | ${r.details.loc} | ${r.details.ariaCount} | ${r.details.keyboardHandlers} | ${r.details.propsCount} | ${r.details.fanOut} |`
   ),
 ].join("\n");
 fs.writeFileSync(
