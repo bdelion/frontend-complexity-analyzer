@@ -7,10 +7,12 @@
  * Prérequis :  npm i -D typescript
  * Usage :      node scripts/component-complexity.mjs --src ./src --out ./complexity-report.json
  *              node scripts/component-complexity.mjs --src ./src --effort ./effort-anchors.json
+ *              node scripts/component-complexity.mjs --src ./src --effort ./a.json --overhead 0.5 --lot-rate 0.5
  *              (--effort : estime les jours de traitement de TOUS les
- *               composants en calibrant une régression sur des durées
- *               réelles fournies pour quelques composants, ex.
- *               {"comboBox":6,"tabs":3,"button":1})
+ *               composants en calibrant une interpolation sur des durées
+ *               réelles, ex. {"comboBox":6,"tabs":3,"button":1}
+ *               --overhead  : coût fixe j/composant (hors ancres)
+ *               --lot-rate  : coût marginal des composants ex æquo (0-1)
  *
  * Principe :
  *   1. Parcourt les fichiers .ts/.tsx et regroupe par composant
@@ -596,14 +598,100 @@ if (effortRaw) {
   const anchorMinX = Math.min(...deduped.map((p) => p.x));
   const anchorMaxX = Math.max(...deduped.map((p) => p.x));
 
+  // --overhead N : coût fixe incompressible par composant (audit,
+  // tests, doc, storybook). Il est appliqué à tous les composants
+  // SAUF les ancres : leurs jours réels incluent déjà ce coût, on
+  // ne les retouche donc pas (days == estimated reste garanti).
+  const overheadRaw = getArg("--overhead", null);
+  let overhead = 0;
+  if (overheadRaw !== null) {
+    overhead = Number(overheadRaw);
+    if (Number.isNaN(overhead) || overhead < 0) {
+      console.error("✖ --overhead : valeur invalide (nombre de jours >= 0 attendu).");
+      process.exit(1);
+    }
+    console.warn(`⚠ Coût fixe de ${overhead} j ajouté à chaque composant non-ancre (les ancres gardent leur durée réelle).`);
+  }
+
+  const anchorNames = new Set(anchorPoints.map((p) => p.name.toLowerCase()));
   for (const r of rows) {
     const raw = Math.max(0, interp.predict(r.index)); // plancher 0
-    r.estimatedDays = Math.round(raw * 10) / 10;
+    const fixed = anchorNames.has(r.component.toLowerCase()) ? 0 : overhead;
+    r.estimatedDays = Math.round((raw + fixed) * 10) / 10;
     r.effortBasis = (r.index < anchorMinX || r.index > anchorMaxX) ? "extrapolated" : "interpolated";
   }
+  effort.overhead = overhead;
   effort.extrapolatedCount = rows.filter((r) => r.effortBasis === "extrapolated").length;
   effort.totalDays = Math.round(rows.reduce((s, r) => s + r.estimatedDays, 0) * 10) / 10;
   effort.meanDays = Math.round((effort.totalDays / rows.length) * 10) / 10;
+
+  /* Agrégats par catégorie : découpage direct en lots de travail. */
+  const byCategory = {};
+  for (const r of rows) {
+    const cat = r.category || "(sans catégorie)";
+    if (!byCategory[cat]) byCategory[cat] = { components: 0, days: 0 };
+    byCategory[cat].components += 1;
+    byCategory[cat].days = Math.round((byCategory[cat].days + r.estimatedDays) * 10) / 10;
+  }
+  effort.byCategory = Object.fromEntries(
+    Object.entries(byCategory).sort((a, b) => b[1].days - a[1].days)
+  );
+
+  /* Validation croisée leave-one-out (>= 4 ancres dédupliquées) :
+   * retirer chaque ancre, recalibrer sans elle, prédire son jour réel.
+   * L'erreur absolue moyenne (MAE) mesure honnêtement la fiabilité
+   * du modèle avec peu de données — plus utile qu'un R² sur 3 points. */
+  if (deduped.length >= 4 && interp.segments !== null) {
+    const errors = [];
+    for (const p of deduped) {
+      const others = deduped.filter((q) => q !== p).map((q) => ({ x: q.x, y: q.days }));
+      const loo = buildInterpolator(others);
+      if (!loo || loo.constant !== null) continue; // retrait ambigu : ignoré
+      errors.push({ anchor: p.name, actual: p.days, predicted: Math.round(loo.predict(p.x) * 10) / 10 });
+    }
+    if (errors.length > 0) {
+      const mae = errors.reduce((s, e) => s + Math.abs(e.actual - e.predicted), 0) / errors.length;
+      effort.crossValidation = {
+        method: "leave-one-out",
+        errors: errors.map((e) => ({ ...e, absError: Math.round(Math.abs(e.actual - e.predicted) * 10) / 10 })),
+        mae: Math.round(mae * 10) / 10,
+      };
+    }
+  }
+
+  /* Gain de groupement de la longue traîne : les composants ex æquo
+   * (même indice = même profil de traitement) partagent l'audit et
+   * les patterns. Le 1er coûte son estimation pleine, les suivants
+   * un coût marginal (--lot-rate, 0-1, défaut 0.5 = 50 %). */
+  const lotRateRaw = getArg("--lot-rate", null);
+  let lotRate = 0.5;
+  if (lotRateRaw !== null) {
+    lotRate = Number(lotRateRaw);
+    if (Number.isNaN(lotRate) || lotRate < 0 || lotRate > 1) {
+      console.error("✖ --lot-rate : valeur invalide (taux 0-1 attendu, ex. 0.5).");
+      process.exit(1);
+    }
+  }
+  const byIndex = new Map(); // index -> [rows]
+  for (const r of rows) byIndex.set(r.index, [...(byIndex.get(r.index) || []), r]);
+  let lotTotal = 0;
+  for (const group of byIndex.values()) {
+    group.forEach((r, i) => {
+      const factor = i === 0 ? 1 : lotRate;
+      lotTotal += Math.max(0, Math.round((interp.predict(r.index) + overhead) * 10) / 10) * factor;
+    });
+  }
+  // Le total "lot" n'a de sens que s'il existe effectivement des ex æquo.
+  const groups = [...byIndex.values()].filter((g) => g.length > 1);
+  if (groups.length > 0 && lotRate < 1) {
+    effort.lotEstimate = {
+      marginalRate: lotRate,
+      groupsCount: groups.length,
+      componentsGrouped: groups.reduce((s, g) => s + g.length, 0),
+      totalDays: Math.round(lotTotal * 10) / 10,
+      savingDays: Math.round((effort.totalDays - lotTotal) * 10) / 10,
+    };
+  }
 }
 
 /* Rang (1 = plus complexe) et percentile, calculés après le tri.
@@ -646,6 +734,21 @@ if (effort) {
   console.log(`\nCharge estimée (modèle : ${modelLabel}, ${effort.anchorsCount} ancres)`);
   console.log(`  Total : ${effort.totalDays} jours — Moyenne : ${effort.meanDays} jours/composant`);
   console.log(`  * estimation extrapolée (hors domaine des ancres) : ${effort.extrapolatedCount} composant(s)`);
+  if (effort.overhead > 0) console.log(`  Coût fixe par composant : ${effort.overhead} j (hors ancres)`);
+  if (effort.crossValidation) {
+    console.log(`  Validation croisée leave-one-out : MAE = ${effort.crossValidation.mae} j`);
+    for (const e of effort.crossValidation.errors) {
+      console.log(`    ${e.anchor} : réel ${e.actual} j / prédit sans cette ancre ${e.predicted} j`);
+    }
+  }
+  if (effort.lotEstimate) {
+    const l = effort.lotEstimate;
+    console.log(`  Traitement en lot des ${l.componentsGrouped} composants ex æquo (${l.groupsCount} groupes, coût marginal ${Math.round(l.marginalRate * 100)} %) : ${l.totalDays} j (économie ${l.savingDays} j)`);
+  }
+  console.log("  Charge par catégorie :");
+  for (const [cat, agg] of Object.entries(effort.byCategory)) {
+    console.log(`    ${cat.padEnd(24)} ${String(agg.components).padStart(2)} composant(s) — ${agg.days} j`);
+  }
   for (const [name, a] of Object.entries(effort.anchors)) {
     console.log(`  Ancre ${name} : réel ${a.days} j / estimé ${a.estimated} j`);
   }
@@ -660,9 +763,25 @@ const md = [
   ),
   ...(effort ? [
     "",
-    `**Charge totale estimée : ${effort.totalDays} jours** (modèle : ${effort.model === "constant" ? "constante" : `interpolation par morceaux, ${effort.segments} segment(s)`}, ${effort.anchorsCount} ancres réelles).`,
+    `**Charge totale estimée : ${effort.totalDays} jours** (modèle : ${effort.model === "constant" ? "constante" : `interpolation par morceaux, ${effort.segments} segment(s)`}, ${effort.anchorsCount} ancres réelles${effort.overhead > 0 ? `, coût fixe ${effort.overhead} j/composant hors ancres` : ""}).`,
     "",
     `\\* Estimation extrapolée (hors domaine couvert par les ancres) : ${effort.extrapolatedCount} composant(s), à considérer avec prudence.`,
+    ...(effort.crossValidation ? [
+      "",
+      `Validation croisée (leave-one-out) : erreur absolue moyenne **${effort.crossValidation.mae} j**. ${effort.crossValidation.errors.map((e) => `${e.anchor} : réel ${e.actual} j / prédit ${e.predicted} j`).join(" ; ")}.`,
+    ] : []),
+    ...(effort.lotEstimate ? [
+      "",
+      `Traitement en lot des composants ex æquo (${effort.lotEstimate.componentsGrouped} composants, ${effort.lotEstimate.groupsCount} groupes, coût marginal ${Math.round(effort.lotEstimate.marginalRate * 100)} %) : **${effort.lotEstimate.totalDays} j**, économie de ${effort.lotEstimate.savingDays} j.`,
+    ] : []),
+    "",
+    "### Charge par catégorie",
+    "",
+    "| Catégorie | Composants | Jours estimés |",
+    "|---|---|---|",
+    ...Object.entries(effort.byCategory).map(([cat, agg]) =>
+      `| ${cat} | ${agg.components} | ${agg.days} |`
+    ),
   ] : []),
 ].join("\n");
 fs.writeFileSync(
