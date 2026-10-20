@@ -525,6 +525,44 @@ function buildInterpolator(points) {
   return { segments: n - 1, constant: null, predict };
 }
 
+/* ----------------------------------------------------------------- */
+/* Échelle de Fibonacci (story points)                                */
+/*                                                                   */
+/* Échelle standard de planning poker : 0.5 (demi-point), puis la      */
+/* suite de Fibonacci 1, 2, 3, 5, 8, 13, 21… prolongée tant que       */
+/* nécessaire.                                                        */
+/* Attribution au point le plus proche en distance géométrique :      */
+/* fibFor(d) = la valeur F minimisant |ln(d / F)|. Sur une échelle   */
+/* exponentielle, c'est le choix naturel (une distance absolue        */
+/* écraserait les petits points au profit des grands).               */
+/* Exemples : 0.7 j -> 0.5 ; 1.9 j -> 2 ; 3.8 j -> 3 ; 5.9 j -> 5.    */
+/* Les points s'additionnent par lot (contrairement aux jours, qui    */
+/* se lisent individuellement) : c'est la mesure de "vélocité".       */
+/* ----------------------------------------------------------------- */
+
+function buildFibonacciScale() {
+  // Demi-point, puis suite de Fibonacci classique (1, 2, 3, 5, 8…)
+  const scale = [0.5, 1, 2, 3];
+  while (scale[scale.length - 1] < 1e6) {
+    scale.push(scale[scale.length - 1] + scale[scale.length - 2]);
+  }
+  return scale;
+}
+
+const FIB_SCALE = buildFibonacciScale();
+
+function fibFor(days) {
+  if (days <= 0) return 0;
+  let best = FIB_SCALE[0];
+  let bestDist = Infinity;
+  for (const f of FIB_SCALE) {
+    const dist = Math.abs(Math.log(days / f));
+    if (dist < bestDist) { bestDist = dist; best = f; }
+    else break; // échelle croissante : plus besoin de chercher
+  }
+  return best;
+}
+
 let effort = null;
 const effortRaw = getArg("--effort", null);
 if (effortRaw) {
@@ -619,6 +657,7 @@ if (effortRaw) {
     const fixed = anchorNames.has(r.component.toLowerCase()) ? 0 : overhead;
     r.estimatedDays = Math.round((raw + fixed) * 10) / 10;
     r.effortBasis = (r.index < anchorMinX || r.index > anchorMaxX) ? "extrapolated" : "interpolated";
+    r.fibonacci = fibFor(r.estimatedDays);
   }
   effort.overhead = overhead;
   effort.extrapolatedCount = rows.filter((r) => r.effortBasis === "extrapolated").length;
@@ -629,13 +668,15 @@ if (effortRaw) {
   const byCategory = {};
   for (const r of rows) {
     const cat = r.category || "(sans catégorie)";
-    if (!byCategory[cat]) byCategory[cat] = { components: 0, days: 0 };
+    if (!byCategory[cat]) byCategory[cat] = { components: 0, days: 0, points: 0 };
     byCategory[cat].components += 1;
     byCategory[cat].days = Math.round((byCategory[cat].days + r.estimatedDays) * 10) / 10;
+    byCategory[cat].points += r.fibonacci;
   }
   effort.byCategory = Object.fromEntries(
     Object.entries(byCategory).sort((a, b) => b[1].days - a[1].days)
   );
+  effort.totalPoints = rows.reduce((s, r) => s + r.fibonacci, 0);
 
   /* Validation croisée leave-one-out (>= 4 ancres dédupliquées) :
    * retirer chaque ancre, recalibrer sans elle, prédire son jour réel.
@@ -720,7 +761,10 @@ console.table(
     Composant: r.component,
     Indice: r.index,
     Pct: `${r.percentile}%`,
-    ...(r.estimatedDays !== undefined ? { Jours: `${r.estimatedDays}${r.effortBasis === "extrapolated" ? "*" : ""}` } : {}),
+    ...(r.estimatedDays !== undefined ? {
+      Jours: `${r.estimatedDays}${r.effortBasis === "extrapolated" ? "*" : ""}`,
+      Pts: r.fibonacci,
+    } : {}),
     Code: r.details.subScores.code,
     Interac: r.details.subScores.interactions,
     A11y: r.details.subScores.a11y,
@@ -733,6 +777,7 @@ if (effort) {
     : `interpolation par morceaux, ${effort.segments} segment(s)`;
   console.log(`\nCharge estimée (modèle : ${modelLabel}, ${effort.anchorsCount} ancres)`);
   console.log(`  Total : ${effort.totalDays} jours — Moyenne : ${effort.meanDays} jours/composant`);
+  console.log(`  Total vélocité : ${effort.totalPoints} points (échelle de Fibonacci 0.5, 1, 2, 3, 5, 8…)`);
   console.log(`  * estimation extrapolée (hors domaine des ancres) : ${effort.extrapolatedCount} composant(s)`);
   if (effort.overhead > 0) console.log(`  Coût fixe par composant : ${effort.overhead} j (hors ancres)`);
   if (effort.crossValidation) {
@@ -747,7 +792,7 @@ if (effort) {
   }
   console.log("  Charge par catégorie :");
   for (const [cat, agg] of Object.entries(effort.byCategory)) {
-    console.log(`    ${cat.padEnd(24)} ${String(agg.components).padStart(2)} composant(s) — ${agg.days} j`);
+    console.log(`    ${cat.padEnd(24)} ${String(agg.components).padStart(2)} composant(s) — ${agg.days} j — ${agg.points} pts`);
   }
   for (const [name, a] of Object.entries(effort.anchors)) {
     console.log(`  Ancre ${name} : réel ${a.days} j / estimé ${a.estimated} j`);
@@ -756,14 +801,14 @@ if (effort) {
 
 const md = [
   "## Indice de complexité des composants\n",
-  `| Rang | Composant | Catégorie | Indice /5 | Percentile |${effort ? " Jours estimés |" : ""} Cyclomatic | LOC | ARIA | Clavier | Props | Fan-out |`,
-  `|---|---|---|---|---|${effort ? "---|" : ""}---|---|---|---|---|---|`,
+  `| Rang | Composant | Catégorie | Indice /5 | Percentile |${effort ? " Jours | Pts |" : ""} Cyclomatic | LOC | ARIA | Clavier | Props | Fan-out |`,
+  `|---|---|---|---|---|${effort ? "---|---|" : ""}---|---|---|---|---|---|`,
   ...rows.map((r) =>
     `| ${r.rank} | ${r.component} | ${r.category} | ${r.index} | ${r.percentile}% |${effort ? ` ${r.estimatedDays}${r.effortBasis === "extrapolated" ? "\\*" : ""} |` : ""} ${r.details.cyclomatic} | ${r.details.loc} | ${r.details.ariaCount} | ${r.details.keyboardHandlers} | ${r.details.propsCount} | ${r.details.fanOut} |`
   ),
   ...(effort ? [
     "",
-    `**Charge totale estimée : ${effort.totalDays} jours** (modèle : ${effort.model === "constant" ? "constante" : `interpolation par morceaux, ${effort.segments} segment(s)`}, ${effort.anchorsCount} ancres réelles${effort.overhead > 0 ? `, coût fixe ${effort.overhead} j/composant hors ancres` : ""}).`,
+    `**Charge totale estimée : ${effort.totalDays} jours / ${effort.totalPoints} points** (modèle : ${effort.model === "constant" ? "constante" : `interpolation par morceaux, ${effort.segments} segment(s)`}, ${effort.anchorsCount} ancres réelles${effort.overhead > 0 ? `, coût fixe ${effort.overhead} j/composant hors ancres` : ""}). Les points suivent l'échelle de Fibonacci (0.5, 1, 2, 3, 5, 8…) : c'est l'unité de vélocité, additive par lot.`,
     "",
     `\\* Estimation extrapolée (hors domaine couvert par les ancres) : ${effort.extrapolatedCount} composant(s), à considérer avec prudence.`,
     ...(effort.crossValidation ? [
@@ -777,10 +822,10 @@ const md = [
     "",
     "### Charge par catégorie",
     "",
-    "| Catégorie | Composants | Jours estimés |",
-    "|---|---|---|",
+    "| Catégorie | Composants | Jours estimés | Points |",
+    "|---|---|---|---|",
     ...Object.entries(effort.byCategory).map(([cat, agg]) =>
-      `| ${cat} | ${agg.components} | ${agg.days} |`
+      `| ${cat} | ${agg.components} | ${agg.days} | ${agg.points} |`
     ),
   ] : []),
 ].join("\n");
