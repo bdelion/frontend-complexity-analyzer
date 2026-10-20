@@ -166,8 +166,10 @@ function analyzeFile(filePath) {
 /* Regroupement par composant                                         */
 /*                                                                   */
 /* Structure attendue :                                               */
-/*   src/components/<ComponentName>/**  -> un composant               */
-/*   src/hooks|internal|contexts|...    -> infrastructure partagée     */
+/*   src/components/<Categorie>/<ComponentName>/**  -> un composant    */
+/*   (si un dossier de catégorie contient directement les fichiers,    */
+/*    il est traité comme un composant unique)                        */
+/*   src/hooks|internal|contexts|...  -> infrastructure partagée       */
 /*     (exclue du classement, mais comptée dans le fan-out de chaque  */
 /*      composant qui en dépend)                                      */
 /* ----------------------------------------------------------------- */
@@ -177,8 +179,18 @@ const SHARED_DIRS = new Set(["hooks", "internal", "contexts", "assets", "toolkit
 /** Renvoie le nom du composant pour un fichier, ou null si infrastructure partagée. */
 function componentNameFor(relPath) {
   const parts = relPath.split(path.sep);
-  if (parts.length >= 2 && parts[0] === "components") return parts[1];
-  return null; // hors src/components/** : shared
+  if (parts[0] !== "components") return null; // hors src/components/** : shared
+  // src/components/<Categorie>/<Composant>/... -> <Composant>
+  if (parts.length >= 3) return parts[2];
+  // src/components/<Nom>/fichier.ts -> <Nom> (pas de niveau catégorie)
+  if (parts.length === 2) return parts[1];
+  return null;
+}
+
+/** Renvoie la catégorie d'un composant (null si fichier d'index de catégorie). */
+function categoryFor(relPath) {
+  const parts = relPath.split(path.sep);
+  return parts[0] === "components" ? parts[1] : null;
 }
 
 /** Renvoie la clé de dépendance pour un import résolu (nom de composant, ou "shared/<dir>"). */
@@ -206,9 +218,11 @@ for (const file of files) {
 
   if (componentName === null) continue; // infrastructure partagée : pas un composant
 
+  const category = categoryFor(rel);
   if (!components.has(componentName)) {
     components.set(componentName, {
       name: componentName,
+      category: category && category !== componentName + ".ts" ? category : null,
       files: 0, loc: 0, cyclomatic: 0, keyboardHandlers: 0,
       pointerHandlers: 0, ariaCount: 0, hooks: 0, propsCount: 0,
       importedBy: new Set(),
@@ -282,6 +296,7 @@ for (const c of components.values()) {
 
   rows.push({
     component: c.name,
+    category: c.category || "",
     index: Math.round(index * 100) / 100,
     tier: index >= 4 ? "élevée" : index >= 2.8 ? "moyenne" : "faible",
     details: {
@@ -327,10 +342,10 @@ console.table(
 
 const md = [
   "## Indice de complexité des composants\n",
-  "| Composant | Indice /5 | Tier | Cyclomatic | LOC | ARIA | Clavier | Props | Fan-out |",
-  "|---|---|---|---|---|---|---|---|---|",
+  "| Composant | Catégorie | Indice /5 | Tier | Cyclomatic | LOC | ARIA | Clavier | Props | Fan-out |",
+  "|---|---|---|---|---|---|---|---|---|---|",
   ...rows.map((r) =>
-    `| ${r.component} | ${r.index} | ${r.tier} | ${r.details.cyclomatic} | ${r.details.loc} | ${r.details.ariaCount} | ${r.details.keyboardHandlers} | ${r.details.propsCount} | ${r.details.fanOut} |`
+    `| ${r.component} | ${r.category} | ${r.index} | ${r.tier} | ${r.details.cyclomatic} | ${r.details.loc} | ${r.details.ariaCount} | ${r.details.keyboardHandlers} | ${r.details.propsCount} | ${r.details.fanOut} |`
   ),
 ].join("\n");
 fs.writeFileSync(path.join(path.dirname(CONFIG.outFile) || ".", "complexity-report.md"), md, "utf8");
