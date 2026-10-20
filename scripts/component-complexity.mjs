@@ -6,6 +6,11 @@
  *
  * Prérequis :  npm i -D typescript
  * Usage :      node scripts/component-complexity.mjs --src ./src --out ./complexity-report.json
+ *              node scripts/component-complexity.mjs --src ./src --effort ./effort-anchors.json
+ *              (--effort : estime les jours de traitement de TOUS les
+ *               composants en calibrant une régression sur des durées
+ *               réelles fournies pour quelques composants, ex.
+ *               {"comboBox":6,"tabs":3,"button":1})
  *
  * Principe :
  *   1. Parcourt les fichiers .ts/.tsx et regroupe par composant
@@ -417,6 +422,132 @@ for (const c of components.values()) {
 
 rows.sort((a, b) => b.index - a.index);
 
+/* ----------------------------------------------------------------- */
+/* Estimation de charge (--effort)                                     */
+/*                                                                   */
+/* Principe : calibrer une relation indice -> jours sur des durées     */
+/* RÉELLES constatées sur quelques composants (points d'ancrage),     */
+/* puis extrapoler à l'ensemble du classement.                        */
+/*                                                                   */
+/* Usage :                                                           */
+/*   --effort '{"comboBox":6,"tabs":3,"button":1}'                    */
+/*   --effort ./effort-anchors.json   (même format, un objet)        */
+/*                                                                   */
+/* Modèles testés, meilleur R² retenu :                                */
+/*   - linéaire  : jours = a * indice + b                             */
+/*   - puissance : jours = a * indice ^ b   (ajustement log-log)       */
+/*                                                                   */
+/* Fiabilité : avec < 4 ancres, l'estimation est indicative ;         */
+/* 4 à 6 ancres réparties sur l'échelle (1 très simple, 1-2 moyens,   */
+/* 1-2 complexes, idéalement 1 très complexe) donnent une base        */
+/* solide. Le rapport expose le R² et les résidus par ancre pour      */
+/* juger de la qualité de l'ajustement.                              */
+/* ----------------------------------------------------------------- */
+
+function parseEffortArg(raw) {
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  if (trimmed.startsWith("{")) {
+    try { return JSON.parse(trimmed); } catch { return null; }
+  }
+  // Format inline "comboBox:6,tabs:3"
+  const out = {};
+  for (const pair of trimmed.split(",")) {
+    const [k, v] = pair.split(":");
+    if (k && v && !Number.isNaN(Number(v))) out[k.trim()] = Number(v);
+  }
+  return Object.keys(out).length > 0 ? out : null;
+}
+
+function fitLinear(xs, ys) {
+  const n = xs.length;
+  const mx = xs.reduce((s, v) => s + v, 0) / n;
+  const my = ys.reduce((s, v) => s + v, 0) / n;
+  let num = 0, den = 0;
+  for (let i = 0; i < n; i++) {
+    num += (xs[i] - mx) * (ys[i] - my);
+    den += (xs[i] - mx) ** 2;
+  }
+  const a = den === 0 ? 0 : num / den;
+  const b = my - a * mx;
+  const predict = (x) => a * x + b;
+  return { type: "linear", a, b, predict };
+}
+
+function fitPower(xs, ys) {
+  // jours = a * indice^b  <=>  ln(jours) = ln(a) + b * ln(indice)
+  const lx = xs.map((x) => Math.log(x));
+  const ly = ys.map((y) => Math.log(y));
+  const lin = fitLinear(lx, ly);
+  const a = Math.exp(lin.b);
+  const b = lin.a;
+  const predict = (x) => a * x ** b;
+  return { type: "power", a, b, predict };
+}
+
+function r2Of(model, xs, ys) {
+  const my = ys.reduce((s, v) => s + v, 0) / ys.length;
+  let ssRes = 0, ssTot = 0;
+  for (let i = 0; i < xs.length; i++) {
+    ssRes += (ys[i] - model.predict(xs[i])) ** 2;
+    ssTot += (ys[i] - my) ** 2;
+  }
+  return ssTot === 0 ? 1 : 1 - ssRes / ssTot;
+}
+
+let effort = null;
+const effortRaw = getArg("--effort", null);
+if (effortRaw) {
+  const anchors = parseEffortArg(effortRaw);
+  if (!anchors) {
+    console.error("✖ --effort : format invalide. Attendu JSON objet composant→jours, inline \"comboBox:6,tabs:3\" ou chemin de fichier.");
+    process.exit(1);
+  }
+  const indexByName = new Map(rows.map((r) => [r.component.toLowerCase(), r]));
+  const xs = [], ys = [], missing = [];
+  for (const [name, days] of Object.entries(anchors)) {
+    const row = indexByName.get(name.toLowerCase());
+    if (!row) { missing.push(name); continue; }
+    xs.push(row.index);
+    ys.push(Number(days));
+  }
+  if (missing.length > 0) {
+    console.warn(`⚠ Ancres inconnues (absentes du rapport) : ${missing.join(", ")}`);
+  }
+  if (xs.length < 2) {
+    console.error("✖ --effort : au moins 2 ancres valides sont nécessaires pour calibrer un modèle.");
+    process.exit(1);
+  }
+  if (xs.length < 4) {
+    console.warn(`⚠ Seulement ${xs.length} ancres : estimation indicative. Visez 4-6 ancres réparties sur l'échelle de complexité.`);
+  }
+
+  const models = [fitLinear(xs, ys)];
+  if (xs.every((x) => x > 0) && ys.every((y) => y > 0)) models.push(fitPower(xs, ys));
+  const best = models.reduce((m, cand) => (r2Of(cand, xs, ys) > r2Of(m, xs, ys) ? cand : m));
+
+  effort = {
+    model: best.type,
+    r2: Math.round(r2Of(best, xs, ys) * 1000) / 1000,
+    anchors: Object.fromEntries(
+      Object.entries(anchors)
+        .filter(([n]) => !missing.includes(n))
+        .map(([n, d]) => {
+          const row = indexByName.get(n.toLowerCase());
+          return [n, { days: d, estimated: Math.round(best.predict(row.index) * 10) / 10 }];
+        })
+    ),
+    anchorsCount: xs.length,
+  };
+
+  for (const r of rows) {
+    const raw = Math.max(0, best.predict(r.index)); // plancher 0
+    r.estimatedDays = Math.round(raw * 10) / 10;
+  }
+  effort.totalDays = Math.round(rows.reduce((s, r) => s + r.estimatedDays, 0) * 10) / 10;
+  effort.meanDays = Math.round((effort.totalDays / rows.length) * 10) / 10;
+}
+
 /* Rang (1 = plus complexe) et percentile, calculés après le tri.
  * Le percentile se lit : "X % des composants sont moins complexes". */
 const sortedValues = rows.map((r) => r.index);
@@ -432,6 +563,7 @@ rows.forEach((r, i) => {
 const report = {
   generatedAt: new Date().toISOString(),
   config: CONFIG,
+  ...(effort ? { effort } : {}),
   ranking: rows,
 };
 fs.writeFileSync(CONFIG.outFile, JSON.stringify(report, null, 2), "utf8");
@@ -442,20 +574,32 @@ console.table(
     Composant: r.component,
     Indice: r.index,
     Pct: `${r.percentile}%`,
+    ...(r.estimatedDays !== undefined ? { Jours: r.estimatedDays } : {}),
     Code: r.details.subScores.code,
     Interac: r.details.subScores.interactions,
     A11y: r.details.subScores.a11y,
     Struct: r.details.subScores.structure,
   }))
 );
+if (effort) {
+  console.log(`\nCharge estimée (modèle ${effort.model}, R² = ${effort.r2}, ${effort.anchorsCount} ancres)`);
+  console.log(`  Total : ${effort.totalDays} jours — Moyenne : ${effort.meanDays} jours/composant`);
+  for (const [name, a] of Object.entries(effort.anchors)) {
+    console.log(`  Ancre ${name} : réel ${a.days} j / estimé ${a.estimated} j`);
+  }
+}
 
 const md = [
   "## Indice de complexité des composants\n",
-  "| Rang | Composant | Catégorie | Indice /5 | Percentile | Cyclomatic | LOC | ARIA | Clavier | Props | Fan-out |",
-  "|---|---|---|---|---|---|---|---|---|---|---|",
+  `| Rang | Composant | Catégorie | Indice /5 | Percentile |${effort ? " Jours estimés |" : ""} Cyclomatic | LOC | ARIA | Clavier | Props | Fan-out |`,
+  `|---|---|---|---|---|${effort ? "---|" : ""}---|---|---|---|---|---|`,
   ...rows.map((r) =>
-    `| ${r.rank} | ${r.component} | ${r.category} | ${r.index} | ${r.percentile}% | ${r.details.cyclomatic} | ${r.details.loc} | ${r.details.ariaCount} | ${r.details.keyboardHandlers} | ${r.details.propsCount} | ${r.details.fanOut} |`
+    `| ${r.rank} | ${r.component} | ${r.category} | ${r.index} | ${r.percentile}% |${effort ? ` ${r.estimatedDays} |` : ""} ${r.details.cyclomatic} | ${r.details.loc} | ${r.details.ariaCount} | ${r.details.keyboardHandlers} | ${r.details.propsCount} | ${r.details.fanOut} |`
   ),
+  ...(effort ? [
+    "",
+    `**Charge totale estimée : ${effort.totalDays} jours** (modèle ${effort.model}, R² = ${effort.r2}, ${effort.anchorsCount} ancres réelles).`,
+  ] : []),
 ].join("\n");
 fs.writeFileSync(
   path.join(path.dirname(CONFIG.outFile) || ".", "complexity-report.md"),
