@@ -24,8 +24,8 @@
  *      produit un classement continu : indice pondéré + rang centile
  *      (pas de tiers, pas d'effet de frontière).
  *
- * Sorties : JSON détaillé, table console, et Markdown prêt à coller
- * dans un README ou une page de documentation.
+ * Sorties : JSON détaillé, table console, Markdown prêt à coller
+ * dans un README, et CSV pour les tableurs (pivots, filtrage).
  * ------------------------------------------------------------------
  */
 
@@ -834,5 +834,45 @@ fs.writeFileSync(
   md, "utf8"
 );
 
+/* ----------------------------------------------------------------- */
+/* Export CSV (tableur / pivot)                                        */
+/*                                                                   */
+/* Sortie : complexity-report.csv à côté du JSON. Séparateur virgule  */
+/* (standard international, s'ouvre directement dans Excel/LibreOffice ;
+ * en France, "Données > Importer" si le séparateur régional est ";"  */
+/* est un paramètre tableur, pas de fichier).                         */
+/* Champs : identification, indice, percentile, jours/points si      */
+/* --effort, métriques détaillées. Encodage : nombres avec point      */
+/* décimal, texte sans guillemets sauf virgule (échappée "").        */
+/* ----------------------------------------------------------------- */
+
+function csvEscape(value) {
+  const s = String(value ?? "");
+  return /[",\n;]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+const csv = [
+  [
+    "rang", "composant", "categorie", "indice", "percentile",
+    ...(effort ? ["jours_estimes", "base_estimation", "points_fibonacci"] : []),
+    "fichiers", "loc", "cyclomatic", "handlers_clavier", "hooks",
+    "aria", "props", "fan_out", "fan_in", "deps_partagees",
+    "score_code", "score_interactions", "score_a11y", "score_structure",
+  ].join(","),
+  ...rows.map((r) => [
+    r.rank, r.component, r.category, r.index, r.percentile,
+    ...(effort ? [r.estimatedDays, r.effortBasis, r.fibonacci] : []),
+    r.details.files, r.details.loc, r.details.cyclomatic,
+    r.details.keyboardHandlers, r.details.hooks, r.details.ariaCount,
+    r.details.propsCount, r.details.fanOut, r.details.fanIn, r.details.sharedDeps,
+    r.details.subScores.code, r.details.subScores.interactions,
+    r.details.subScores.a11y, r.details.subScores.structure,
+  ].map(csvEscape).join(",")),
+].join("\n");
+
+const csvPath = path.join(path.dirname(CONFIG.outFile) || ".", "complexity-report.csv");
+fs.writeFileSync(csvPath, csv, "utf8");
+
 console.log(`\n✔ Rapport JSON : ${CONFIG.outFile}`);
 console.log(`✔ Table Markdown : ${path.join(path.dirname(CONFIG.outFile) || ".", "complexity-report.md")}`);
+console.log(`✔ Export CSV : ${csvPath}`);
