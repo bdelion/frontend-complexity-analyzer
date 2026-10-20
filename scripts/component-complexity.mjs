@@ -215,14 +215,15 @@ function analyzeFile(filePath) {
 /*   src/components/<Catégorie>/** (plate)       -> un composant       */
 /*     (fichiers directement dans le dossier, index.ts inclus :        */
 /*      ré-exports et sous-fichiers sont rattachés à la catégorie)     */
-/*   Tout ce qui est hors src/components/** (contexts, hooks,        */
-/*   internal, toolkit…) forme des unités partagées par dossier le    */
-/*   plus profond, nommées par leur chemin relatif (ex. src/contexts/ */
-/*   a11yMessages/** -> "contexts/a11yMessages"), classées et        */
-/*   estimées comme des composants (catégorie "shared"). Les          */
-/*   dépendances d'un composant vers ces unités comptent dans son     */
-/*   fan-out ET dans son sharedDeps ; les barrels d'unité (ex. src/   */
-/*   hooks/index.ts) ne contribuent qu'au graphe de dépendances.      */
+/*   Tout ce qui est hors src/components/** forme des unités classées  */
+/*   et estimées comme des composants (catégorie "shared") :           */
+/*   - src/hooks/**, src/contexts/**, src/internal/** : granularité    */
+/*     FICHIER (nom sans extension, ex. use-focus, a11yProvider,      */
+/*     useFocusTrap) ; les barrels index.ts ne sont que des clés de    */
+/*     graphe (dossier).                                               */
+/*   - autres dossiers (toolkit, commons…) : granularité dossier le   */
+/*     plus profond, nommé par son chemin relatif.                    */
+/*   - src/assets/** : exclu.                                          */
 /* ----------------------------------------------------------------- */
 
 /** Fichiers à exclure de l'analyse (tests). */
@@ -264,17 +265,23 @@ const EXCLUDE_RE = /\.(e2e|test|spec)\.(ts|tsx)$/;
 function componentNameFor(relPath) {
   const parts = relPath.split(path.sep);
   if (parts[0] !== "components") {
-    // Infrastructure partagée (contexts, hooks, internal, toolkit…) :
-    // incluse dans le classement comme des unités à part entières.
-    // Granularité : le DOSSIER LE PLUS PROFOND, nommé par son chemin
-    // complet relatif à src/ (ex. src/contexts/a11yMessages/** ->
-    // "contexts/a11yMessages") pour éviter les collisions entre
-    // arborescences (ex. src/hooks vs src/internal/hooks). Un fichier
-    // directement à la racine de src/ forme sa propre unité.
+    // src/assets/** : exclu (icônes SVG, pas des unités de travail).
+    if (parts[0] === "assets") return null;
+    const fileName = parts[parts.length - 1].replace(/\.(ts|tsx)$/, "");
+    // Hooks, contexts, internal : granularité FICHIER — chaque fichier
+    // est une unité nommée d'après son nom sans extension (ex. src/
+    // hooks/use-focus.ts -> "use-focus"). Le chemin complet est
+    // conservé à part dans le rapport (details.paths).
+    // Les barrels (index.ts) ne sont pas des unités : ils servent de
+    // clé de dossier pour le graphe de dépendances (importer src/hooks
+    // = dépendre du dossier "hooks").
+    if (parts[0] === "hooks" || parts[0] === "contexts" || parts[0] === "internal") {
+      return fileName === "index" ? parts.slice(0, -1).join("/") : fileName;
+    }
+    // Autres modules partagés (toolkit, commons…) : granularité dossier
+    // le plus profond, nommé par son chemin relatif.
     const dirs = parts.slice(0, -1);
-    return dirs.length === 0
-      ? parts[0].replace(/\.(ts|tsx)$/, "")
-      : dirs.join("/");
+    return dirs.length === 0 ? fileName : dirs.join("/");
   }
 
   const dirs = parts.slice(1, -1); // ex. ["formElements", "comboBox"]
@@ -348,20 +355,19 @@ for (const file of files) {
   if (EXCLUDE_RE.test(file)) continue; // tests e2e/unitaires exclus
   const rel = path.relative(CONFIG.srcDir, file);
   const componentName = componentNameFor(rel);
-  if (componentName === null) continue; // barrel racine components/index.ts
+  if (componentName === null) continue; // barrel racine ou src/assets/** (exclus)
 
   const m = analyzeFile(file);
   const category = categoryFor(rel);
   const dirs = rel.split(path.sep).slice(1, -1);
 
-  if (m.isBarrel && (dirs.length === 0 ||
-      (dirs.length <= 1 && rel.split(path.sep)[0] === "components"))) {
-    // Barrel racine (src/index.ts, components/index.ts) ou de catégorie
-    // (ex. components/buttons/index.ts) : ré-export pur, ignoré — ni
-    // métriques ni entrée fantôme. Un barrel racine qui ré-exporte
-    // toute la librairie n'est pas une unité de travail.
-    // (Les barrels de dossier partagé — ex. src/hooks/index.ts — ne sont
-    //  pas ignorés : leurs imports comptent dans le fan-out de l'unité.)
+  if (m.isBarrel && (dirs.length <= 1 || rel.split(path.sep)[0] !== "components")) {
+    // Barrel ignoré comme unité : racine (src/index.ts, components/
+    // index.ts), de catégorie (components/buttons/index.ts) ou de
+    // dossier partagé (src/hooks/index.ts, src/contexts/**/index.ts).
+    // Les barrels ne sont que des clés du graphe de dépendances
+    // (importer src/hooks = dépendre du dossier "hooks") — un
+    // ré-export pur n'est pas une unité de travail.
     continue;
   }
   if (m.isBarrel) {
@@ -377,9 +383,11 @@ for (const file of files) {
       files: 0, loc: 0, cyclomatic: 0, keyboardHandlers: 0,
       pointerHandlers: 0, ariaCount: 0, hooks: 0, propsCount: 0,
       importedBy: new Set(),
+      paths: [], // chemins relatifs des fichiers de l'unité
     });
   }
   const agg = components.get(componentName);
+  agg.paths.push(rel);
   for (const k of ["files", "loc", "cyclomatic", "keyboardHandlers",
     "pointerHandlers", "ariaCount", "hooks", "propsCount"]) {
     agg[k] += m[k];
@@ -470,6 +478,7 @@ for (const c of components.values()) {
     percentile: 0, // calculé après le tri
     details: {
       files: c.files, loc: c.loc, cyclomatic: c.cyclomatic,
+      paths: c.paths,
       keyboardHandlers: c.keyboardHandlers, hooks: c.hooks,
       ariaCount: c.ariaCount, propsCount: c.propsCount,
       fanOut, fanIn, sharedDeps,
@@ -897,6 +906,7 @@ const csv = [
     "fichiers", "loc", "cyclomatic", "handlers_clavier", "hooks",
     "aria", "props", "fan_out", "fan_in", "deps_partagees",
     "score_code", "score_interactions", "score_a11y", "score_structure",
+    "chemins",
   ].join(","),
   ...rows.map((r) => [
     r.rank, r.component, r.category, r.index, r.percentile,
@@ -906,6 +916,7 @@ const csv = [
     r.details.propsCount, r.details.fanOut, r.details.fanIn, r.details.sharedDeps,
     r.details.subScores.code, r.details.subScores.interactions,
     r.details.subScores.a11y, r.details.subScores.structure,
+    (r.details.paths || []).join(" | "),
   ].map(csvEscape).join(",")),
 ].join("\n");
 
