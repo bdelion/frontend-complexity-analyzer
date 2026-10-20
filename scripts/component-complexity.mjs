@@ -60,7 +60,7 @@ const CONFIG = {
     ariaCount: [0, 17],        // observé : 0-17
     hooks: [0, 18],            // observé : 0-18
     fanOut: [0, 9],            // observé : 0-9
-    propsCount: [2, 25],
+    propsCount: [0, 40],        // observé : 0-38 (rapport du 2026-10-20)
   },
   // Pas de seuils de tier : le classement est continu.
   // Chaque composant reçoit son rang (1 = plus complexe) et son
