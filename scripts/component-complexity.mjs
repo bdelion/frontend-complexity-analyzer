@@ -201,12 +201,25 @@ const EXCLUDE_RE = /\.(e2e|test|spec)\.(ts|tsx)$/;
  *   components/index.ts                  -> null (barrel racine)
  *   components/<Cat>/<fichier>           -> <Cat> (catégorie plate fusionnée)
  *   components/<Cat>/<Compo>/<fichier>   -> <Compo> (index.ts compris)
+ *   components/<Cat>/<fichier>           -> <Cat> SI la catégorie contient un
+ *                                           sous-dossier composant du même nom
+ *                                           (ex. dialog/DialogHeader.tsx ->
+ *                                           composant dialog/), sinon null
+ *                                           (annexe hors composant, ex.
+ *                                           formElements/listBoxAndComboBoxBreakPoints.ts)
  *
  * Les barrels (fichiers ne contenant que des imports/re-exports) sont
  * détectés par analyse du contenu, pas par le nom : voir analyzeFile.
  * Un barrel de catégorie est ignoré ; un barrel de composant ne
  * contribue qu'au graphe de dépendances (métriques nulles).
  */
+
+/* Pré-passe sur l'arborescence (déclarée plus bas, après la collecte
+ * `files`) :
+ * - categoriesWithComponents : catégories contenant des sous-dossiers composants
+ * - componentDirs : noms de ces composants (dossiers de niveau 2)
+ */
+
 function componentNameFor(relPath) {
   const parts = relPath.split(path.sep);
   if (parts[0] !== "components") return null;
@@ -214,9 +227,15 @@ function componentNameFor(relPath) {
   const dirs = parts.slice(1, -1); // ex. ["formElements", "comboBox"]
 
   if (dirs.length === 0) return null; // components/index.ts
-  if (dirs.length === 1) return dirs[0]; // catégorie plate (ou fichiers
-                                          // racine d'une catégorie : composant
-                                          // principal de la catégorie)
+  if (dirs.length === 1) {
+    // Fichier à la racine d'une catégorie
+    if (!categoriesWithComponents.has(dirs[0])) return dirs[0]; // catégorie plate
+    // Catégorie à composants : le fichier n'est un composant que si un
+    // sous-dossier composant porte le même nom (annexes de la famille,
+    // ex. dialog/DialogHeader.tsx -> composant dialog/). Sinon c'est
+    // une annexe hors composant : ignorée.
+    return componentDirs.has(dirs[0]) ? dirs[0] : null;
+  }
   return dirs[dirs.length - 1]; // composant (niveau le plus profond)
 }
 
@@ -238,6 +257,22 @@ const files = walk(CONFIG.srcDir);
 if (files.length === 0) {
   console.error(`Aucun fichier .ts/.tsx trouvé dans ${CONFIG.srcDir}`);
   process.exit(1);
+}
+
+/* Pré-passe sur l'arborescence :
+ * - categoriesWithComponents : catégories contenant des sous-dossiers composants
+ *   (components/<Cat>/<Compo>/<fichier>)
+ * - componentDirs : noms de ces composants (dossiers de niveau 2)
+ */
+const categoriesWithComponents = new Set();
+const componentDirs = new Set();
+for (const f of files) {
+  if (EXCLUDE_RE.test(f)) continue;
+  const parts = path.relative(CONFIG.srcDir, f).split(path.sep);
+  if (parts[0] === "components" && parts.length >= 4) {
+    categoriesWithComponents.add(parts[1]);
+    componentDirs.add(parts[2]);
+  }
 }
 
 const components = new Map();  // name -> métriques agrégées (composants uniquement)
