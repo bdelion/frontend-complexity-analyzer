@@ -804,7 +804,7 @@ const md = [
   `| Rang | Composant | Catégorie | Indice /5 | Percentile |${effort ? " Jours | Pts |" : ""} Cyclomatic | LOC | ARIA | Clavier | Props | Fan-out |`,
   `|---|---|---|---|---|${effort ? "---|---|" : ""}---|---|---|---|---|---|`,
   ...rows.map((r) =>
-    `| ${r.rank} | ${r.component} | ${r.category} | ${r.index} | ${r.percentile}% |${effort ? ` ${r.estimatedDays}${r.effortBasis === "extrapolated" ? "\\*" : ""} |` : ""} ${r.details.cyclomatic} | ${r.details.loc} | ${r.details.ariaCount} | ${r.details.keyboardHandlers} | ${r.details.propsCount} | ${r.details.fanOut} |`
+    `| ${r.rank} | ${r.component} | ${r.category} | ${r.index} | ${r.percentile}% |${effort ? ` ${r.estimatedDays}${r.effortBasis === "extrapolated" ? "\\*" : ""} | ${r.fibonacci} |` : ""} ${r.details.cyclomatic} | ${r.details.loc} | ${r.details.ariaCount} | ${r.details.keyboardHandlers} | ${r.details.propsCount} | ${r.details.fanOut} |`
   ),
   ...(effort ? [
     "",
