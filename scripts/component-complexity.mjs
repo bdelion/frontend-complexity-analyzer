@@ -215,20 +215,25 @@ function analyzeFile(filePath) {
 /*   src/components/<Catégorie>/** (plate)       -> un composant       */
 /*     (fichiers directement dans le dossier, index.ts inclus :        */
 /*      ré-exports et sous-fichiers sont rattachés à la catégorie)     */
-/*   Tout ce qui est hors src/components/** est traité comme          */
-/*   infrastructure partagée (hooks, internal, contexts, assets…) :   */
-/*   exclue du classement, mais comptée dans le fan-out de chaque      */
-/*   composant qui en dépend (clé "shared/<dir>").                    */
+/*   Tout ce qui est hors src/components/** (contexts, hooks,        */
+/*   internal, utils…) forme une unité partagée par dossier racine   */
+/*   (ex. src/hooks/** -> "hooks"), classée et estimée comme un      */
+/*   composant (catégorie "shared"). Les dépendances d'un composant   */
+/*   vers ces unités comptent dans son fan-out ET dans son           */
+/*   sharedDeps ; les barrels partagés (ex. src/hooks/index.ts) ne   */
+/*   contribuent qu'au graphe de dépendances.                        */
 /* ----------------------------------------------------------------- */
 
 /** Fichiers à exclure de l'analyse (tests). */
 const EXCLUDE_RE = /\.(e2e|test|spec)\.(ts|tsx)$/;
 
 /**
- * Renvoie le nom du composant pour un fichier, ou null si le fichier
- * n'appartient pas à src/components/** (infrastructure partagée).
+ * Renvoie le nom de l'unité pour un fichier, ou null pour le barrel
+ * racine (components/index.ts).
  *
  * Règles (relatif à src/) :
+ *   <dir>/<fichier>                     -> <dir> (unité partagée, hors components)
+ *   <fichier> à la racine de src/       -> <fichier> sans extension (unité propre)
  *   components/index.ts                  -> null (barrel racine)
  *   components/<Cat>/<fichier>           -> <Cat> (catégorie plate fusionnée)
  *   components/<Cat>/<Compo>/<fichier>   -> <Compo> (index.ts compris)
@@ -253,7 +258,16 @@ const EXCLUDE_RE = /\.(e2e|test|spec)\.(ts|tsx)$/;
 
 function componentNameFor(relPath) {
   const parts = relPath.split(path.sep);
-  if (parts[0] !== "components") return null;
+  if (parts[0] !== "components") {
+    // Infrastructure partagée (contexts, hooks, internal, utils…) :
+    // incluse dans le classement comme une unité à part entière,
+    // nommée d'après son dossier racine sous src/ (ex. src/hooks/**
+    // -> "hooks"). Un fichier directement à la racine de src/ forme
+    // sa propre unité (nom de fichier sans extension).
+    return parts.length === 1
+      ? parts[0].replace(/\.(ts|tsx)$/, "")
+      : parts[0];
+  }
 
   const dirs = parts.slice(1, -1); // ex. ["formElements", "comboBox"]
 
@@ -273,15 +287,13 @@ function componentNameFor(relPath) {
 /** Renvoie la catégorie d'appartenance d'un fichier sous components/. */
 function categoryFor(relPath) {
   const parts = relPath.split(path.sep);
-  return parts[0] === "components" && parts.length >= 2 ? parts[1] : null;
+  if (parts[0] !== "components") return "shared"; // infrastructure partagée
+  return parts.length >= 2 ? parts[1] : null;
 }
 
 /** Renvoie la clé de dépendance pour un import résolu. */
 function dependencyKeyFor(relPath) {
-  const comp = componentNameFor(relPath);
-  if (comp) return comp;
-  const parts = relPath.split(path.sep);
-  return "shared/" + parts[0];
+  return componentNameFor(relPath); // composant OU unité partagée
 }
 
 const files = walk(CONFIG.srcDir);
@@ -306,6 +318,20 @@ for (const f of files) {
   }
 }
 
+/* Noms des unités partagées (hors src/components/**) : servent à
+ * distinguer, dans le fan-out d'un composant, les dépendances vers
+ * l'infrastructure (sharedDeps) des dépendances vers d'autres
+ * composants. */
+const sharedUnitNames = new Set();
+for (const f of files) {
+  if (EXCLUDE_RE.test(f)) continue;
+  const rel = path.relative(CONFIG.srcDir, f);
+  if (rel.split(path.sep)[0] !== "components") {
+    const unit = componentNameFor(rel);
+    if (unit) sharedUnitNames.add(unit);
+  }
+}
+
 const components = new Map();  // name -> métriques agrégées (composants uniquement)
 const pendingFanIn = [];       // [cible, source] pour imports vers composants non encore visités
 const sharedUsage = new Map(); // composant -> Set de modules partagés utilisés
@@ -314,15 +340,20 @@ for (const file of files) {
   if (EXCLUDE_RE.test(file)) continue; // tests e2e/unitaires exclus
   const rel = path.relative(CONFIG.srcDir, file);
   const componentName = componentNameFor(rel);
-  if (componentName === null) continue; // infrastructure partagée : pas un composant
+  if (componentName === null) continue; // barrel racine components/index.ts
 
   const m = analyzeFile(file);
   const category = categoryFor(rel);
   const dirs = rel.split(path.sep).slice(1, -1);
 
-  if (m.isBarrel && dirs.length <= 1) {
-    // Barrel de catégorie ou racine (ex. components/buttons/index.ts) :
-    // ré-export pur, ignoré — ni métriques ni entrée fantôme.
+  if (m.isBarrel && (dirs.length === 0 ||
+      (dirs.length <= 1 && rel.split(path.sep)[0] === "components"))) {
+    // Barrel racine (src/index.ts, components/index.ts) ou de catégorie
+    // (ex. components/buttons/index.ts) : ré-export pur, ignoré — ni
+    // métriques ni entrée fantôme. Un barrel racine qui ré-exporte
+    // toute la librairie n'est pas une unité de travail.
+    // (Les barrels de dossier partagé — ex. src/hooks/index.ts — ne sont
+    //  pas ignorés : leurs imports comptent dans le fan-out de l'unité.)
     continue;
   }
   if (m.isBarrel) {
@@ -354,7 +385,7 @@ for (const file of files) {
     const target = dependencyKeyFor(relImp);
     if (!target || target === componentName) continue;
     agg.imports.add(target);
-    if (target.startsWith("shared/")) {
+    if (sharedUnitNames.has(target)) {
       sharedUsage.get(componentName).add(target);
     } else {
       const dep = components.get(target);
