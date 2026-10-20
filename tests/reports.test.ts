@@ -100,7 +100,8 @@ describe('comparaison et historique', () => {
   });
   test('archives uniques, liste triée, archive corrompue signalée', async () => {
     const directory = path.join(data.base, 'history');
-    const report = data.report;
+    const report = structuredClone(data.report);
+    report.generatedAt = '2026-10-15T12:00:00.000Z';
     const first = await archiveReport(report, directory);
     expect(first).toContain(report.runId);
     await expect(archiveReport(report, directory)).rejects.toThrow();
@@ -188,5 +189,41 @@ describe('invariants et agrégations', () => {
     await writeFile(file, 'not json');
     await expect(readReport(file)).rejects.toThrow();
     expect(await readFile(file, 'utf8')).toBe('not json');
+  });
+
+  test('ratios : propagation des deux opérandes, indépendance et absence explicite', () => {
+    const unit = fragment('export function Button(p:{label:string}) { return <button/> }').unit;
+    const set = (id: string, value: number | null, estimated = false) => {
+      const metric = unit.metrics.find((m) => m.id === id)!;
+      metric.observation =
+        value === null
+          ? { status: 'unavailable', value: null, reason: 'Fixture incomplète' }
+          : estimated
+            ? { status: 'estimated', value, rationale: 'Fixture estimée' }
+            : { status: 'measured', value };
+    };
+    // Un numérateur estimé ne doit affecter que les ratios qui l'utilisent.
+    const tests = structuredClone(unit.metrics.find((m) => m.id === 'api.props')!);
+    tests.id = 'tests.declarations';
+    unit.metrics.push(tests);
+    set('tests.declarations', 4, true);
+    const find = (id: string) => aggregate('ds:Button', [unit], 'own').find((m) => m.id === id)!;
+    expect(find('tests.perProp').observation.status).toBe('estimated');
+    expect(find('docs.publicDocumented').observation.status).toBe('measured');
+    set('tests.declarations', 4);
+    set('api.props', 2, true);
+    expect(find('tests.perProp').observation).toMatchObject({ status: 'estimated', value: 2 });
+    set('code.loc', 2, true);
+    expect(find('tests.perLoc').observation.status).toBe('estimated');
+    set('api.exports', 2, true);
+    expect(find('docs.publicDocumented').observation.status).toBe('estimated');
+    set('api.exports', 2);
+    set('docs.documentedExports', 1, true);
+    expect(find('docs.publicDocumented').observation.status).toBe('estimated');
+    set('api.props', null);
+    expect(find('tests.perProp').observation.status).toBe('unavailable');
+    set('api.props', 0);
+    expect(find('tests.perProp').observation.status).toBe('unavailable');
+    expect(find('tests.perProp').algorithmVersion).toBe('ratios-1.1.0');
   });
 });

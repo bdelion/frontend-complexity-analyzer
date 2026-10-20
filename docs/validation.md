@@ -2,7 +2,29 @@
 
 Environnement : Windows, Node v22.23.3, Intel Core i3-4130 à 3,40 GHz, environ 8 Go de RAM. Les résultats concernent des fixtures synthétiques ; ils ne constituent pas une validation des comptages sur les librairies internes.
 
-## Résultat du passage final
+## Correctifs S01–S09/C01/C02 — 20 octobre 2026
+
+Le script autonome est testé comme un processus réel dans `tests/component-complexity.test.ts`. Les cas couvrent les identités par chemin, les sous-dossiers, les exports par défaut, les props importées/héritées/composées, les alias React, les stories et dossiers exclus, les erreurs de parsing, les barrels et cycles, les alias tsconfig, les degrés du graphe et les dépendances de types.
+
+La calibration vérifie les ancres inline et fichier, la constante, les ancres ex æquo, les arguments invalides/vides, les débordements numériques, la validation croisée et le lot avec coût fixe. Le cas initialement incohérent à 15 jours individuels donne maintenant 14,5 jours en lot. Les tests d'écriture préservent les sources et ancres, refusent les jonctions vers les entrées, évitent la troncature par lien physique et neutralisent les formules CSV. Les fixtures restent dans le dossier temporaire.
+
+Pour la CLI, le test de ratios vérifie les deux opérandes, les données absentes et l'indépendance du ratio documentaire ; le test d'historique utilise deux dates fixes. La version d'agrégation est `1.1.0` et celle des ratios agrégés `ratios-1.1.0`. Le script publie son schéma et ses algorithmes `2.0.0` ; les anciens rapports et ancres doivent être réexaminés.
+
+Contrôles exécutés sur le patch :
+
+- `npm.cmd run typecheck` : réussi.
+- `npm.cmd run lint` : réussi.
+- `npm.cmd run format:check` : réussi sur tout le dépôt, script compris.
+- Build : réussi lors de `npm.cmd test` et de `npm.cmd run test:coverage`.
+- `npm.cmd test`, passage final : **88 tests réussis dans 9 fichiers**, dont les 32 tests du script autonome. Aucun échec.
+- `npm.cmd run test:coverage` : 85 tests réussis dans 9 fichiers au moment de ce passage. Couverture CLI : lignes/instructions 97,48 %, branches 94,67 %, fonctions 95,45 % ; seuils respectés.
+- Après l'ajout de trois cas d'arguments vides, la suite du script contient 32 tests, tous réussis. Les derniers ajustements des vues Markdown sont également inclus dans la validation finale.
+- `npm.cmd run docs` : réussi.
+- `git diff --check` : réussi.
+
+L'instrumentation porte sur `src/**/*.ts` ; elle n'instrumente pas les sous-processus du script autonome. Aucune couverture chiffrée de ce script n'est revendiquée. Le benchmark et les services Docker/Jenkins/Sonar n'ont pas été relancés. Aucun poids n'a été modifié et aucune calibration sur un corpus réel n'est revendiquée.
+
+## Résultat initial, avant corrections S01–S09/C01/C02
 
 `npm.cmd run test:coverage` : **55 tests réussis dans 8 fichiers**, y compris les tests E2E du binaire compilé. Couverture globale : instructions et lignes **97,48 %**, branches **94,67 %**, fonctions **95,45 %**. Tous les seuils >80 % sont respectés. Les sous-processus des tests E2E sont vérifiés fonctionnellement ; leur couverture n'est pas fusionnée avec celle de Vitest.
 

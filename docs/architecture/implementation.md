@@ -33,6 +33,17 @@ La [V4](../design/specification-v4.md) reste la référence de conception valid�
 - Les tests multi-composants sont partagés selon imports directs ; aucune preuve d'efficacité de test n'est dérivée de leur nombre. Les tests paramétrés comptent une déclaration.
 - La couverture importée est un bundle explicite de comptes avec empreintes ; les lecteurs LCOV/Istanbul natifs sont différés. Les branches sont conservées en comptes, le ratio `coverage.executed` porte sur les lignes.
 - L'historique liste les exécutions ; les tendances s'obtiennent par comparaison de rapports compatibles. Aucun rapprochement automatique de renommage.
+- L'agrégation `1.1.0` propage le statut estimé du numérateur ou du dénominateur de chaque ratio, avec métriques `ratios-1.1.0`. Le ratio documentaire est indépendant du statut des déclarations de tests. Cette version entre dans le contrôle de compatibilité des comparaisons.
+
+## Script autonome, schéma 2.0.0
+
+`scripts/component-complexity.mjs` conserve une implémentation indépendante de `src/`. Il utilise l'API compilateur TypeScript, Commander et Zod. Il construit des identités par chemin, un inventaire de production sans tests/stories, un programme TypeScript en lecture seule, les mesures localisées et un graphe d'unités traversant les barrels sans les compter comme code. Les dépendances explicitement de types sont séparées des arêtes d'exécution.
+
+Le classement et la calibration restent propres au script. Les noms courts ambigus sont refusés pour les ancres ; les chemins sont les identifiants de référence. Le schéma et les algorithmes 2.0.0 signalent les changements de périmètre et de comptage. Les rapports ne sont pas interchangeables avec les rapports de la CLI.
+
+Les sorties JSON/Markdown/CSV partagent le nom de base fourni par `--out`. Toutes les destinations sont contrôlées avant préparation ; les fichiers sont remplacés par renommage, de façon atomique par fichier. Il ne s'agit pas d'une transaction globale sur les trois vues. Les sources, tsconfig et fichier d'ancres sont protégés contre les recouvrements ; les liens physiques de sortie ne permettent pas de tronquer les entrées.
+
+Les tests de processus de `tests/component-complexity.test.ts` vérifient le script réel sans importer son implémentation. Leur couverture n'est pas comprise dans le pourcentage instrumenté de `src/`.
 
 ## Validation et points restant à éprouver
 

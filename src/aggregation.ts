@@ -166,9 +166,8 @@ export function aggregate(
     ['tests.perLoc', 'code.loc'],
     ['docs.publicDocumented', 'api.exports'],
   ] as const) {
-    const numerator = metricValue(
-      id.startsWith('tests.') ? 'tests.declarations' : 'docs.documentedExports',
-    );
+    const numeratorId = id.startsWith('tests.') ? 'tests.declarations' : 'docs.documentedExports';
+    const numerator = metricValue(numeratorId);
     const divisor = metricValue(denominator);
     put(
       id,
@@ -176,9 +175,11 @@ export function aggregate(
       proofs,
       {
         unit: 'ratio',
+        version: 'ratios-1.1.0',
         reason: 'Numérateur indisponible ou dénominateur nul/indisponible',
         estimated: result.some(
-          (m) => m.id === 'tests.declarations' && m.observation.status === 'estimated',
+          (m) =>
+            (m.id === numeratorId || m.id === denominator) && m.observation.status === 'estimated',
         ),
       },
     );

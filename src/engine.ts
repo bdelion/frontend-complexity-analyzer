@@ -52,6 +52,7 @@ export async function analyze(
       tests: '1.0.0',
       ownership: '1.0.0',
       graph: '1.0.0',
+      aggregation: '1.1.0',
     },
     libraries: [],
     units: [],

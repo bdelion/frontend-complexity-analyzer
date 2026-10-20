@@ -11,7 +11,7 @@ Le dépôt contient aussi un [script autonome de classement](#script-autonome-co
 | Métriques traçables, diagnostics, analyse multi-librairies et comparaison de rapports compatibles        | CLI `analyzer` / `rcca`           |
 | Classement pondéré de composants et d'unités partagées, exploration d'une charge calibrée par des ancres | Script `component-complexity.mjs` |
 
-La [revue du dépôt du 20 octobre 2026](docs/reviews/repository-review-2026-10-20.md) décrit les constats vérifiés et les améliorations proposées. Elle ne constitue pas une validation des estimations sur un corpus réel.
+La [revue du dépôt du 20 octobre 2026](docs/reviews/repository-review-2026-10-20.md) décrit les constats vérifiés, le suivi des corrections S01–S09/C01/C02 et les améliorations proposées. Elle ne constitue pas une validation des estimations sur un corpus réel.
 
 ## Installation et premier essai sous Windows
 
@@ -131,7 +131,7 @@ npm.cmd run schemas
 npm.cmd run benchmark
 ```
 
-`test` et `test:coverage` construisent aussi le binaire pour les tests E2E. Les seuils de couverture de la CLI sont strictement supérieurs à 80 % sur lignes, branches, fonctions et instructions. L'instrumentation couvre `src/**/*.ts` : elle ne couvre pas le script autonome, qui ne possède pas de suite dédiée dans `tests/`. Les tests utilisent des corpus synthétiques dans le répertoire temporaire ; ils ne nécessitent ni React installé dans ces corpus ni accès réseau. Les fixtures temporaires sont conservées pour inspection.
+`test` et `test:coverage` construisent aussi le binaire pour les tests E2E. Les seuils de couverture de la CLI sont strictement supérieurs à 80 % sur lignes, branches, fonctions et instructions. L'instrumentation couvre `src/**/*.ts` ; le script autonome est vérifié par des tests de processus dans `tests/component-complexity.test.ts`, hors de ce pourcentage. Les tests utilisent des corpus synthétiques dans le répertoire temporaire ; ils ne nécessitent ni React installé dans ces corpus ni accès réseau. Les fixtures temporaires sont conservées pour inspection.
 
 - [Guide utilisateur](docs/user-guide.md) : configuration, interprétation, couverture importée, comparaison, Docker et Jenkins.
 - [Architecture implémentée et limites](docs/architecture/implementation.md) : modules et écarts avec la conception.
@@ -144,34 +144,42 @@ Les cinq documents de `docs/specifications/` restent inchangés. Le corpus réel
 
 ## Script autonome `component-complexity.mjs`
 
-Ce script a été développé séparément de la CLI. Il s'exécute sans compilation préalable, mais nécessite l'installation du package `typescript`, déclaré dans les dépendances de développement du dépôt. Il n'importe pas le code de la CLI.
+Ce script est indépendant du code de la CLI et s'exécute sans build préalable. Il utilise TypeScript pour l'AST et la résolution des types/imports, Commander pour les arguments et Zod pour leur validation. Installer les dépendances de développement du dépôt pour disposer de TypeScript.
 
-Il parcourt les sources `.ts`/`.tsx`, hors déclarations `.d.ts`, et classe des composants ainsi que des unités partagées. Il calcule des métriques de code, API, hooks, attributs ARIA, gestionnaires et dépendances, puis un indice pondéré, un rang et un percentile. Ces indicateurs ne constituent pas une mesure de conformité RGAA.
+### Version 2 : migration des rapports
+
+Les corrections S01–S09 introduisent le schéma et les algorithmes **2.0.0**. Les résultats ne sont pas directement comparables aux anciens rapports : identités, périmètre de production, props, hooks et graphe ont été corrigés. Recalculer les rapports et réexaminer les ancres avec cette version.
+
+Chaque ligne possède un `id` stable fondé sur le chemin, un nom d'affichage `component` et un `kind` (`component` ou `shared`). Une ancre peut utiliser cet identifiant ou un nom court unique, sans distinction de casse. Un nom ambigu ou inconnu est refusé ; deux noms désignant la même unité sont également refusés.
+
+Le rapport JSON contient `schemaVersion`, `algorithmVersions`, `diagnostics`, `config`, `ranking` et, si demandé, `effort`. Les observations de `details.observations` portent un statut mesuré/estimé/indisponible et des preuves chemin/lignes. `indexStatus` propage les limites des entrées ; une API indisponible donne un indice `null`, sans zéro de substitution.
 
 ### Périmètre et regroupement
 
-Les chemins ci-dessous sont relatifs au dossier passé à `--src`.
+Les chemins sont relatifs au dossier passé à `--src`.
 
-| Chemin                                           | Unité classée                                                                                       |
-| ------------------------------------------------ | --------------------------------------------------------------------------------------------------- |
-| `components/<catégorie>/<composant>/fichier.tsx` | Nom du dossier composant ; avec des sous-dossiers supplémentaires, le dernier dossier est retenu    |
-| `components/<catégorie>/fichier.tsx`             | Catégorie si elle est plate ; sinon rattachement conditionnel à un composant homonyme, ou exclusion |
-| `hooks/`, `contexts/`, `internal/`               | Une unité par fichier, nommée sans extension et classée dans `shared`                               |
-| Autres dossiers hors `components/`               | Une unité par dossier le plus profond, nommée par son chemin relatif et classée dans `shared`       |
-| Fichier à la racine de `--src`                   | Nom du fichier sans extension, catégorie `shared`                                                   |
-| `assets/`                                        | Exclu du classement                                                                                 |
+| Chemin                                  | Identifiant et périmètre                                                                                                         |
+| --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `components/<catégorie>/<composant>/**` | `components/<catégorie>/<composant>` ; les sous-dossiers restent dans le même composant                                          |
+| `components/<catégorie>/fichier.tsx`    | `components/<catégorie>` si la catégorie est plate ; sinon rattachement à un composant homonyme de cette catégorie, ou exclusion |
+| `hooks/`, `contexts/`, `internal/`      | Chemin complet du fichier, extension comprise ; une unité `shared` par fichier                                                   |
+| Autres dossiers hors `components/`      | Chemin du dossier le plus profond ; une unité `shared` par dossier                                                               |
+| Fichier à la racine                     | Chemin du fichier ; une unité `shared`                                                                                           |
 
-Les fichiers `*.test.ts(x)`, `*.spec.ts(x)` et `*.e2e.ts(x)` sont exclus. Les stories sont incluses. Les barrels sont ignorés ou neutralisés selon leur emplacement ; la détection actuelle peut aussi traiter un `export default` contenant du code comme un barrel. Le parcours ne filtre pas les dossiers `node_modules`, `dist` ou `coverage` : fournir une racine source ciblée.
+Les fichiers `.d.ts`, `*.test.ts(x)`, `*.spec.ts(x)`, `*.e2e.ts(x)` et `*.stories.ts(x)` sont exclus des métriques de production. Les dossiers `assets`, `node_modules`, `dist`, `coverage` et `.git` sont ignorés, ainsi que les liens symboliques. Les barrels purs (imports/réexports sans implémentation) ne créent pas d'unité et ne contribuent pas aux métriques de code ; leurs arêtes sont suivies, y compris dans les cycles. Les implémentations en `export default` sont analysées.
 
-`details.paths` conserve les chemins relatifs des fichiers regroupés. Les noms seuls servent de clés pour les composants et les fichiers de `hooks/`, `contexts/`, `internal/` : des homonymes peuvent fusionner, même dans des dossiers différents.
+Les composants et l'infrastructure restent classés ensemble, avec des catégories distinctes. Le total de charge comprend donc toutes les unités classées : vérifier que l'activité estimée couvre aussi le code partagé.
 
 ### Métriques et indice
 
-- Les LOC comptent les lignes non vides qui ne commencent pas par `//` ; ce comptage n'exclut pas tous les commentaires multilignes.
-- La complexité compte une base par fichier, puis les conditions, boucles, `case`, `catch`, ternaires, `&&` et `||`. Elle diffère de la convention par fonction de la CLI.
-- Les hooks sont reconnus par leur nom d'appel ; les gestionnaires « clavier » comprennent aussi `onFocus` et `onBlur`. La résolution des symboles React n'est pas effectuée.
-- Les props proviennent des interfaces et alias de type littéral dont le nom contient `Props`, `Options`, `Config`, `Attributes` ou `Params`. À défaut de membres trouvés dans le fichier, le script compte les éléments destructurés du premier paramètre des fonctions, y compris les éléments rest et les fonctions auxiliaires. Ce repli ne résout pas les types importés, hérités ou composés.
-- Le graphe examine les imports relatifs sans résolution TypeScript complète ; les alias et réexports ne sont pas suivis. Les imports vers un dossier et le fan-in des unités partagées peuvent être sous-comptés.
+- Les LOC comptent les lignes non vides qui ne commencent pas par `//` ; tous les commentaires multilignes ne sont pas exclus.
+- La complexité compte une base par fichier de production, puis les conditions, boucles, `case`, `catch`, ternaires, `&&` et `||`. Cette convention diffère de celle de la CLI, définie par fonction.
+- Les hooks sont reconnus à partir des imports React, avec alias et namespaces, sans compter les homonymes locaux. Les gestionnaires « clavier » comprennent aussi `onFocus` et `onBlur`.
+- Les props sont celles des fonctions de rendu exportées, identifiées par un nom commençant par une majuscule ou par un export par défaut. Les types importés, hérités, unions et intersections sont résolus par TypeScript ; les props DOM/React héritées sont séparées du comptage propre en les excluant. Les types auxiliaires inutilisés et les fonctions privées ne gonflent plus la surface d'API. Pour un type `any`/`unknown`, une destructuration fournit une estimation hors rest ; sans destructuration, la mesure est indisponible.
+- Les spreads JSX rendent les comptages visibles d'attributs et de gestionnaires estimés ; ils génèrent un diagnostic. Aucun signal ARIA ne prouve une conformité RGAA.
+- Le graphe résout les fichiers, dossiers, alias et réexports via TypeScript. Les imports explicitement de types restent dans `details.typeDependencies`, hors fan-in/fan-out d'exécution. Les arêtes sont uniques et les unités partagées disposent aussi d'un fan-in. Les imports internes irrésolus produisent un diagnostic et dégradent le statut du graphe.
+
+Le tsconfig est recherché à partir de la racine source et de ses parents. `--tsconfig` permet d'en imposer un. Aucun module ni script de la bibliothèque n'est exécuté et aucun fichier source n'est sauvegardé.
 
 Chaque métrique utilisée dans l'indice est bornée et normalisée sur 1–5, puis combinée :
 
@@ -182,47 +190,39 @@ Chaque métrique utilisée dans l'indice est bornée et normalisée sur 1–5, p
 | Signaux d'accessibilité | 30 %  | Comptage ARIA, rôles et signaux apparentés    |
 | Structure               | 10 %  | 50 % fan-out + 50 % props                     |
 
-Les bornes sont définies dans `CONFIG.bounds` : complexité 5–100, LOC 50–1 200, gestionnaires 0–4, ARIA 0–17, hooks 0–18, fan-out 0–9, props 0–40. Les valeurs hors bornes sont saturées ; les indices sont arrondis au centième avant le classement et la calibration. Les poids actuels totalisent 1, mais le code ne les renormalise pas automatiquement après modification.
+Les bornes sont définies dans `BOUNDS` : complexité 5–100, LOC 50–1 200, gestionnaires 0–4, ARIA 0–17, hooks 0–18, fan-out 0–9, props 0–40. Les poids de `WEIGHTS` totalisent 1, sans renormalisation automatique. Les indices sont arrondis au centième avant classement et calibration. Le rang est départagé par identifiant en cas d'égalité ; les ex æquo partagent le même percentile. Un singleton a un percentile de 0 ; un indice indisponible donne un percentile `null`.
 
-### Exécution et sorties
-
-```powershell
-node scripts/component-complexity.mjs --src "D:\Git\design-system\src" --out "D:\Rapports\classement\complexity-report.json"
-```
-
-Créer le dossier de sortie au préalable et choisir des chemins dédiés hors des sources : ce script ne reprend pas les protections d'écriture de la CLI. Il écrit le JSON demandé, les fichiers `complexity-report.md` et `complexity-report.csv` dans le même dossier et un tableau dans la console.
-
-L'option `--effort` permet d'estimer une charge à partir de durées observées sur des composants servant d'ancres :
+### Exécution, arguments et sorties
 
 ```powershell
-node scripts/component-complexity.mjs --src "D:\Git\design-system\src" --out "D:\Rapports\classement\complexity-report.json" --effort "button:1,tab:2,comboBox:6"
+node scripts/component-complexity.mjs --help
+node scripts/component-complexity.mjs --src "D:\Git\design-system\src" --out "D:\Rapports\classement\resultat.json"
+node scripts/component-complexity.mjs --src "D:\Git\design-system\src" --out "D:\Rapports\classement\effort.json" --effort "button:1,tab:2,comboBox:6" --overhead 0.5 --lot-rate 0.5
 ```
 
-Les noms d'ancres doivent correspondre aux composants détectés. Le modèle interpole linéairement entre les ancres et extrapole hors de leur domaine avec la pente globale. Une interpolation passant par les ancres ne valide pas les estimations des autres composants ; des indices proches associés à des durées différentes peuvent produire une forte sensibilité. Les estimations restent à confronter à des observations indépendantes.
+| Option                 | Rôle                                                                           |
+| ---------------------- | ------------------------------------------------------------------------------ |
+| `--src <dossier>`      | Racine source, défaut `./src`                                                  |
+| `--out <fichier>`      | Rapport JSON, défaut `./complexity-report.json`                                |
+| `--tsconfig <fichier>` | Configuration TypeScript explicite                                             |
+| `--effort <ancres>`    | Objet JSON inline, paires `identifiant:jours` ou chemin d'un fichier JSON      |
+| `--overhead <jours>`   | Coût fixe des unités non ancres, défaut 0 ; nécessite `--effort`               |
+| `--lot-rate <taux>`    | Taux marginal de 0 à 1, défaut 0,5 ; nécessite `--effort` ; 1 désactive le lot |
+| `--help` / `--version` | Aide ou version, sans analyse                                                  |
 
-| Option               | Rôle                                                                                                                                                      |
-| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--src <dossier>`    | Racine des sources, `./src` par défaut                                                                                                                    |
-| `--out <fichier>`    | Destination JSON, `./complexity-report.json` par défaut                                                                                                   |
-| `--effort <ancres>`  | Durées en jours, sous forme d'objet JSON inline ou de paires `composant:jours`                                                                            |
-| `--overhead <jours>` | Avec `--effort`, ajouter un coût fixe aux composants non ancres ; défaut : 0                                                                              |
-| `--lot-rate <taux>`  | Avec `--effort`, appliquer un coût marginal aux composants suivants d'un groupe de même indice pour l'estimation en lot ; taux entre 0 et 1, défaut : 0,5 |
+Les durées sont des nombres finis positifs ou nuls ; le taux marginal est borné à 1. Une option inconnue, une valeur absente ou une entrée invalide provoque un échec explicite avant toute écriture. Codes de sortie : 0 pour une exécution réussie (consulter aussi les diagnostics), 1 pour une erreur. Ces codes sont distincts de ceux de la CLI principale.
 
-Avec `--effort`, les rapports comprennent aussi :
+Le dossier de sortie est créé automatiquement. Pour `resultat.json`, les autres vues sont `resultat.md` et `resultat.csv`, à côté du JSON. Les trois destinations sont contrôlées avant toute écriture : recouvrement des sources/configuration/ancres et destinations superposées sont refusés. Les fichiers sont préparés puis remplacés par renommage, sans tronquer une source liée par lien physique. Le remplacement est atomique par fichier, pas transactionnel entre les trois rapports. Le CSV échappe les cellules de texte pouvant être interprétées comme des formules.
 
-- des points obtenus en rapprochant les jours estimés d'une échelle de Fibonacci selon une distance logarithmique ; cette conversion ne mesure pas une vélocité d'équipe ;
-- des totaux de jours et de points par catégorie, dont `shared`, et pour l'ensemble des unités classées ;
-- le repérage des estimations hors domaine des ancres ;
-- une validation croisée leave-one-out à partir de quatre indices d'ancrage distincts, avec erreur absolue moyenne ; elle évalue l'interpolation sur les ancres disponibles, sans valider tout le modèle opérationnel ;
-- une estimation en lot lorsqu'il existe des ex æquo et que le taux marginal est inférieur à 1, y compris avec le taux par défaut de 0,5.
+### Estimation et limites
 
-Le coût fixe est ajouté aux unités non ancres dans l'estimation individuelle. L'estimation en lot repose sur une hypothèse de mutualisation entre unités de même indice arrondi, à valider pour l'activité concernée : un même indice ne démontre pas un même travail. Le calcul en lot réapplique actuellement le coût fixe aux ancres ; avec `--overhead`, son total et son « économie » peuvent donc être incohérents avec le total individuel.
+Une seule ancre définit une durée constante. Plusieurs ancres définissent une interpolation linéaire par morceaux ; hors domaine, la pente globale sert à extrapoler. Les jours extrapolés sont bornés à zéro. Les ancres de même indice sont moyennées, avec diagnostic : elles ne sont alors plus toutes reproduites exactement. Une forte pente entre indices proches reste possible.
 
-Limites actuelles : le chemin de fichier annoncé dans l'en-tête pour `--effort` n'est pas chargé ; utiliser les formats inline. Le cas d'une seule ancre ou d'un seul indice d'ancrage distinct provoque une erreur, et le percentile n'est pas défini pour un corpus d'un seul composant.
+Le coût fixe s'ajoute uniquement aux unités non ancres. Le lot repart de ces durées individuelles : pour chaque indice arrondi, l'unité la plus coûteuse conserve son plein tarif et les autres reçoivent le taux marginal. Ce calcul est déterministe et ne réapplique pas le coût fixe. La mutualisation reste une hypothèse métier : un même indice ne démontre pas un même travail.
 
-Des ancres au même indice sont moyennées : elles ne sont alors plus toutes reproduites exactement. La validation des nombres reste à renforcer pour refuser les durées négatives, non numériques ou infinies. Les preuves ne comportent pas de lignes ni de statuts mesuré/estimé/indisponible, et le rapport ne porte pas de version d'algorithme.
+Les rapports comprennent aussi les totaux par catégorie, les extrapolations, des points Fibonacci dérivés des jours et une validation croisée leave-one-out à partir de quatre indices d'ancrage distincts. Ces éléments ne mesurent pas une vélocité d'équipe et ne valident pas les hypothèses opérationnelles de coût fixe ou de lot. Une API indisponible bloque l'estimation de charge, avec un message invitant à consulter le rapport sans `--effort`.
 
-Les rapports de ce script ont leur propre structure : ils ne sont pas acceptés par les commandes `report`, `compare` et `history` de la CLI. La politique de score et les bornes sont définies dans le script ; elles sont indépendantes de la V4 de la CLI.
+Les poids et le modèle restent propres au script ; ils ne sont pas validés comme modèle de charge universel. Les rapports ne sont pas acceptés par les commandes `report`, `compare` et `history` de la CLI. Les imports dynamiques, la génération de props et les conventions React non reconnues demandent encore une vérification manuelle.
 
 ## Scripts techniques
 
