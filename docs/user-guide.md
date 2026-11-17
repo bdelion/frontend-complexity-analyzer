@@ -1,5 +1,117 @@
 # Guide utilisateur
 
+## Démarrer simplement
+
+Ce guide explique comment demander à l'outil de regarder du code React et où trouver les résultats. Vous n'avez pas besoin de connaître les détails de l'analyse pour faire un premier essai.
+
+### Les mots utiles
+
+| Mot       | En clair                                                                           |
+| --------- | ---------------------------------------------------------------------------------- |
+| Librairie | Le dossier qui contient les composants de votre Design System.                     |
+| Composant | Un morceau d'interface, par exemple un bouton ou une liste déroulante.             |
+| Analyse   | L'outil lit les fichiers et compte des indices. Il ne lance pas l'application.     |
+| Mesure    | Un nombre trouvé dans le code, par exemple le nombre de propriétés d'un composant. |
+| Preuve    | Le nom du fichier et la ligne où l'indice a été trouvé.                            |
+| Rapport   | Les fichiers qui présentent les résultats de l'analyse.                            |
+
+### Faire un premier essai
+
+1. Ouvrez PowerShell dans le dossier de **cet outil**.
+2. Vérifiez que Node.js 22.12 ou une version plus récente est installé.
+3. Préparez l'outil et lancez son exemple :
+
+```powershell
+npm.cmd ci --ignore-scripts
+npm.cmd run build
+node dist/cli.js analyze --config examples/analyzer.config.json --explain
+Start-Process ./reports/demo/index.html
+```
+
+Le navigateur ouvre le rapport de démonstration. Cet essai utilise les fichiers d'exemple livrés avec l'outil, pas votre librairie.
+
+### Regarder votre librairie
+
+Choisissez un dossier de sortie différent du dossier de votre librairie. L'outil refuse d'écrire dans les fichiers qu'il analyse.
+
+```powershell
+node dist/cli.js analyze --root "D:\Git\design-system" --output "D:\Rapports\design-system" --format json,md,csv,html --explain
+```
+
+Remplacez les deux chemins par ceux de votre ordinateur. Les guillemets sont importants si un chemin contient des espaces.
+
+Pour regarder un seul composant, ajoutez par exemple `--component Button`. Si ce nom existe plusieurs fois, l'outil vous demandera d'utiliser un identifiant plus précis. Voir [Choisir un composant](#composant-isolé-et-code-partagé).
+
+### Ouvrir et comprendre les résultats
+
+Dans le dossier de sortie, vous trouverez les formats demandés :
+
+- `report.md` : un résumé à lire ;
+- `index.html` : une page à ouvrir dans un navigateur ;
+- `report.csv` : un tableau à ouvrir dans un tableur ;
+- `report.json` : tous les résultats et leurs détails.
+
+Les mesures portent sur ce que l'outil peut lire dans les fichiers. Elles ne disent pas, à elles seules, si l'interface fonctionne bien.
+
+| Statut        | Ce que cela veut dire                                                                            |
+| ------------- | ------------------------------------------------------------------------------------------------ |
+| `measured`    | L'indice a été trouvé et compté. Cela ne prouve pas son comportement quand l'application tourne. |
+| `estimated`   | L'outil a trouvé des indices, mais il sait qu'il lui manque une partie des informations.         |
+| `unavailable` | Il manque trop d'informations pour donner un nombre fiable. La valeur est `null`, pas zéro.      |
+
+Un diagnostic explique un doute ou un problème et indique le fichier concerné. Le code de sortie est **0** si l'analyse est complète, **1** si elle est partielle et **2** si une entrée est invalide ou si une erreur empêche l'analyse.
+
+### Ce que l'outil ne fait pas
+
+- Il ne modifie pas votre librairie.
+- Il ne lance ni ses tests, ni ses scripts, ni votre application.
+- Il ne prouve pas automatiquement la conformité RGAA.
+- Il ne transforme pas les nombres en jours de travail.
+- Il ne dit pas qu'un test a réussi simplement parce qu'il l'a trouvé dans un fichier.
+
+Pour commencer, retenez ceci : l'outil donne des **indices à vérifier**, pas un verdict.
+
+## Référence détaillée
+
+Les sections suivantes expliquent les réglages, les limites et les fonctions avancées. Si vous voulez seulement essayer l'outil, vous pouvez vous arrêter ici.
+
+### Trouver une commande ou une option
+
+L'outil peut afficher son aide sans analyser de fichiers :
+
+```powershell
+node dist/cli.js --help
+node dist/cli.js analyze --help
+```
+
+Les options les plus utiles pour `analyze` sont :
+
+| Option                          | À quoi elle sert                                                                        |
+| ------------------------------- | --------------------------------------------------------------------------------------- |
+| `--config fichier.json`         | Lire les dossiers et réglages depuis un fichier.                                        |
+| `--root "D:\...\librairie"`     | Indiquer le dossier de la librairie à regarder. Plusieurs dossiers peuvent être donnés. |
+| `--output "D:\...\rapports"`    | Choisir où écrire les rapports, en dehors de la librairie.                              |
+| `--format json,md,html`         | Choisir les types de rapports. Les choix possibles sont `json`, `md`, `csv` et `html`.  |
+| `--component Button`            | Regarder un seul composant. Son nom doit être unique.                                   |
+| `--explain`                     | Afficher les explications des avertissements.                                           |
+| `--stdout`                      | Afficher aussi le rapport JSON dans la fenêtre PowerShell.                              |
+| `--history "D:\...\historique"` | Garder une copie datée du rapport.                                                      |
+| `--coverage fichier.json`       | Lire des résultats de couverture déjà produits ; aucun test n'est lancé.                |
+| `--stats`                       | Afficher le temps et la mémoire utilisés.                                               |
+| `--no-progress`                 | Cacher l'indicateur d'avancement.                                                       |
+
+Autres commandes utiles :
+
+| Commande                                                         | À quoi elle sert                                                    |
+| ---------------------------------------------------------------- | ------------------------------------------------------------------- |
+| `validate-config --config fichier.json`                          | Vérifier les réglages avant l'analyse.                              |
+| `report rapport.json --output dossier`                           | Refaire les rapports lisibles à partir d'un rapport JSON déjà créé. |
+| `compare ancien.json nouveau.json`                               | Comparer deux analyses compatibles.                                 |
+| `history add rapport.json --output dossier`                      | Ranger un rapport dans l'historique.                                |
+| `history list dossier`                                           | Afficher les rapports rangés dans l'historique.                     |
+| `schema config` ou `schema report`                               | Afficher la forme attendue d'un fichier JSON.                       |
+| `sonar rapport.json --project-base dossier --output issues.json` | Préparer un fichier pour Sonar ; cela ne l'envoie pas à Sonar.      |
+
 ## Analyse locale et sécurité des entrées
 
 Exécuter `npm.cmd ci --ignore-scripts`, puis `npm.cmd run build` dans le dépôt de l'outil. Seuls ses scripts de construction/tests sont nécessaires. Une analyse ne charge aucun module applicatif, configuration JS, plugin ou script de la librairie.

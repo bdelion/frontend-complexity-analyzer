@@ -2,6 +2,20 @@
 
 La [V4](../design/specification-v4.md) reste la référence de conception validée. Ce document décrit le code livré et ses limites, sans réécrire les sources originales.
 
+## L'outil expliqué simplement
+
+L'outil suit une recette en cinq étapes :
+
+1. Il lit votre configuration pour savoir quels dossiers regarder.
+2. Il fait la liste des fichiers à analyser et laisse de côté ceux qui sont exclus.
+3. Il lit la forme du code TypeScript/React (son AST), sans lancer le code.
+4. Il compte des indices et garde les références aux fichiers et aux lignes.
+5. Il rassemble les résultats dans des rapports écrits dans le dossier choisi.
+
+On peut voir cela comme un lecteur qui prend des notes : il regarde les fichiers, mais ne les réécrit pas. Les nombres sont des indices, pas des notes de qualité ni une preuve de conformité RGAA.
+
+Pour lancer l'outil, suivez le [guide utilisateur](../user-guide.md). Le reste de cette page décrit les pièces internes du programme, surtout utile si vous le développez.
+
 | Module                       | Fonction                                                                                                 |
 | ---------------------------- | -------------------------------------------------------------------------------------------------------- |
 | `configuration.ts`           | Zod strict, motifs picomatch, chemins canoniques et empreinte logique                                    |
