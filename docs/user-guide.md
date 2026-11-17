@@ -112,6 +112,25 @@ Autres commandes utiles :
 | `schema config` ou `schema report`                               | Afficher la forme attendue d'un fichier JSON.                       |
 | `sonar rapport.json --project-base dossier --output issues.json` | Préparer un fichier pour Sonar ; cela ne l'envoie pas à Sonar.      |
 
+### Estimer les dépendances communes
+
+Le script autonome peut produire des totaux propres et dédupliqués avec l'option `--dependency-estimates`. Cette option nécessite `--effort` :
+
+```powershell
+node scripts/component-complexity.mjs --src "D:\toto" --out "D:\Rapports\toto-estimation.json" --effort "Button:1,Tabs:2,Combobox:6" --dependency-estimates
+```
+
+Le rapport contient alors :
+
+- `ownDays` : coût propre du composant ;
+- `contextDays` : coût propre augmenté des dépendances partagées transitives ;
+- `independentProjectDays` : somme de tous les contextes indépendants ;
+- `uniqueProjectDays` : coût unique du projet sans compter deux fois une unité commune ;
+- `differenceDays` : différence entre les deux totaux ;
+- `sharedBy` : composants utilisant une même unité partagée.
+
+Cette option ne double pas une dépendance dans `uniqueProjectDays`. Une unité présente dans plusieurs contextes reste visible dans chacun d'eux, puis est comptée une seule fois dans le projet dédupliqué.
+
 ## Analyse locale et sécurité des entrées
 
 Exécuter `npm.cmd ci --ignore-scripts`, puis `npm.cmd run build` dans le dépôt de l'outil. Seuls ses scripts de construction/tests sont nécessaires. Une analyse ne charge aucun module applicatif, configuration JS, plugin ou script de la librairie.

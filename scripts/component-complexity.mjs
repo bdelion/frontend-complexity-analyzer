@@ -286,6 +286,138 @@ function estimate(rows, anchors, overhead, lotRate, diagnostics) {
   return effort;
 }
 
+/** Calcule les coûts propres, transitifs et dédupliqués des composants.
+ * @param rows Unités classées avec leurs dépendances directes.
+ * @param effort Estimation produite pour toutes les unités.
+ * @param diagnostics Collecteur des limites rencontrées.
+ * @returns Synthèse explicite des contextes indépendants et du projet dédupliqué.
+ */
+function dependencyEstimates(rows, effort, diagnostics) {
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  const components = rows.filter((row) => row.kind === 'component');
+  const contexts = [];
+  const sharedReachCount = new Map();
+
+  for (const component of components) {
+    const distances = new Map([[component.id, 0]]);
+    const pending = [...(component.details.dependencies ?? []).map((id) => ({ id, depth: 1 }))];
+    const seenDependencies = new Set();
+
+    while (pending.length) {
+      const { id, depth } = pending.shift();
+      if (seenDependencies.has(id)) continue;
+      seenDependencies.add(id);
+      distances.set(id, Math.min(distances.get(id) ?? Number.POSITIVE_INFINITY, depth));
+      const dependency = byId.get(id);
+      if (!dependency) continue;
+      for (const nextId of dependency.details.dependencies ?? [])
+        pending.push({ id: nextId, depth: depth + 1 });
+    }
+
+    const transitiveDependencies = [...seenDependencies]
+      .map((id) => byId.get(id))
+      .filter(Boolean)
+      .sort((a, b) => a.id.localeCompare(b.id, 'en'))
+      .map((dependency) => ({
+        id: dependency.id,
+        kind: dependency.kind,
+        depth: distances.get(dependency.id),
+        status: dependency.estimatedDays === null ? 'unavailable' : 'measured',
+        days: dependency.estimatedDays,
+        fibonacci: dependency.estimatedDays === null ? null : fibonacci(dependency.estimatedDays),
+      }));
+    const sharedDependencies = transitiveDependencies.filter((dependency) => {
+      const row = byId.get(dependency.id);
+      return row?.kind === 'shared';
+    });
+
+    for (const dependency of sharedDependencies)
+      sharedReachCount.set(dependency.id, (sharedReachCount.get(dependency.id) ?? 0) + 1);
+
+    const unavailable =
+      component.estimatedDays === null ||
+      sharedDependencies.some((dependency) => dependency.days === null);
+    const contextDays = unavailable
+      ? null
+      : round(
+          component.estimatedDays +
+            sharedDependencies.reduce((sum, dependency) => sum + (dependency.days ?? 0), 0),
+        );
+    contexts.push({
+      id: component.id,
+      ownDays: component.estimatedDays,
+      ownFibonacci: component.estimatedDays === null ? null : fibonacci(component.estimatedDays),
+      contextDays,
+      contextFibonacci: contextDays === null ? null : fibonacci(contextDays),
+      transitiveDependencies,
+      sharedDependencies,
+    });
+  }
+
+  const sharedBy = new Map();
+  for (const context of contexts) {
+    for (const dependency of context.transitiveDependencies) {
+      if (byId.get(dependency.id)?.kind !== 'shared') continue;
+      sharedBy.set(dependency.id, [...(sharedBy.get(dependency.id) ?? []), context.id]);
+    }
+  }
+  for (const context of contexts) {
+    context.sharedDependencies = context.sharedDependencies.map((dependency) => ({
+      ...dependency,
+      sharedBy: [...(sharedBy.get(dependency.id) ?? [])].sort(),
+    }));
+  }
+
+  const reachableSharedIds = new Set();
+  for (const context of contexts)
+    for (const dependency of context.sharedDependencies) reachableSharedIds.add(dependency.id);
+  const reachableShared = rows.filter(
+    (row) => row.kind === 'shared' && reachableSharedIds.has(row.id),
+  );
+
+  let independentProjectDays = contexts.some((context) => context.contextDays === null)
+    ? null
+    : round(contexts.reduce((sum, context) => sum + context.contextDays, 0));
+
+  const uniqueProjectDays =
+    components.some((component) => component.estimatedDays === null) ||
+    reachableShared.some((shared) => shared.estimatedDays === null)
+      ? null
+      : round(
+          components.reduce((sum, component) => sum + component.estimatedDays, 0) +
+            reachableShared.reduce((sum, shared) => sum + shared.estimatedDays, 0),
+        );
+
+  if (independentProjectDays === null || uniqueProjectDays === null)
+    diagnostics.push({
+      code: 'DEPENDENCY_ESTIMATE_UNAVAILABLE',
+      message: 'Un coût propre ou partagé est indisponible ; aucun total dépendant n’est inventé',
+    });
+
+  const result = {
+    mode: 'transitive-deduplicated',
+    components: contexts,
+    independentProjectDays,
+    independentProjectFibonacci:
+      independentProjectDays === null ? null : fibonacci(independentProjectDays),
+    uniqueProjectDays,
+    uniqueProjectFibonacci: uniqueProjectDays === null ? null : fibonacci(uniqueProjectDays),
+    differenceDays:
+      independentProjectDays === null || uniqueProjectDays === null
+        ? null
+        : round(independentProjectDays - uniqueProjectDays),
+  };
+  const contextById = new Map(contexts.map((context) => [context.id, context]));
+  for (const row of rows) {
+    const context = contextById.get(row.id);
+    if (!context) continue;
+    row.ownEstimateDays = context.ownDays;
+    row.contextEstimateDays = context.contextDays;
+    row.contextFibonacci = context.contextFibonacci;
+  }
+  return result;
+}
+
 /** Construit les unités, preuves et arêtes à partir d'un programme TypeScript en lecture seule. */
 function analyze(root, configPath, diagnostics) {
   const files = inventory(root, diagnostics);
@@ -732,7 +864,7 @@ function csvEscape(value) {
   return '"' + text.replaceAll('"', '""') + '"';
 }
 function views(report) {
-  const { ranking: rows, effort } = report;
+  const { ranking: rows, effort, dependencyEstimate } = report;
   const fields = [
     'rank',
     'id',
@@ -743,6 +875,7 @@ function views(report) {
     'indexStatus',
     'percentile',
     ...(effort ? ['estimatedDays', 'effortBasis', 'fibonacci'] : []),
+    ...(dependencyEstimate ? ['ownEstimateDays', 'contextEstimateDays', 'contextFibonacci'] : []),
     ...METRICS,
     'fanOut',
     'fanIn',
@@ -825,6 +958,23 @@ function views(report) {
         `Estimation en lot : ${effort.lotEstimate.totalDays} jours ; économie : ${effort.lotEstimate.savingDays} jours ; taux marginal : ${effort.lotRate}.`,
       );
   }
+  if (dependencyEstimate) {
+    md.push(
+      '',
+      '## Estimation des dépendances transitives',
+      '',
+      `Somme indépendante par contexte : **${dependencyEstimate.independentProjectDays ?? 'indisponible'} jours** / ${dependencyEstimate.independentProjectFibonacci ?? 'indisponible'} points dérivés.`,
+      `Coût unique dédupliqué : **${dependencyEstimate.uniqueProjectDays ?? 'indisponible'} jours** / ${dependencyEstimate.uniqueProjectFibonacci ?? 'indisponible'} points dérivés.`,
+      `Différence : ${dependencyEstimate.differenceDays ?? 'indisponible'} jour(s).`,
+      '',
+      '| Composant | Propre | Dépendances transitives | Total du contexte | Fibonacci |',
+      '|---|---|---|---|---|',
+      ...dependencyEstimate.components.map(
+        (context) =>
+          `| ${mdEscape(context.id)} | ${context.ownDays ?? 'indisponible'} | ${context.sharedDependencies.length ? context.sharedDependencies.map((dependency) => mdEscape(`${dependency.id} (${dependency.days ?? 'indisponible'} j, profondeur ${dependency.depth}, partagé avec ${dependency.sharedBy.length} composant(s))`)).join('<br>') : 'aucune'} | ${context.contextDays ?? 'indisponible'} | ${context.contextFibonacci ?? 'indisponible'} |`,
+      ),
+    );
+  }
   md.push(
     '',
     '## Diagnostics',
@@ -850,7 +1000,11 @@ async function main() {
     .option('--tsconfig <fichier>', 'Configuration TypeScript ; recherche automatique sinon')
     .option('--effort <ancres>', 'Objet JSON, paires identifiant:jours ou fichier JSON')
     .option('--overhead <jours>', 'Coût fixe des unités non ancres', '0')
-    .option('--lot-rate <taux>', 'Coût marginal des ex æquo', '0.5');
+    .option('--lot-rate <taux>', 'Coût marginal des ex æquo', '0.5')
+    .option(
+      '--dependency-estimates',
+      'Afficher les coûts propres, transitifs, indépendants et dédupliqués',
+    );
   command.parse(process.argv);
   const options = command.opts();
   for (const name of ['src', 'out', 'tsconfig', 'effort', 'overhead', 'lotRate']) {
@@ -865,6 +1019,8 @@ async function main() {
       command.getOptionValueSource('lotRate') === 'cli')
   )
     throw new Error('--overhead et --lot-rate nécessitent --effort');
+  if (options.dependencyEstimates && !options.effort)
+    throw new Error('--dependency-estimates nécessite --effort');
   const root = canonical(options.src);
   if (!fs.statSync(root).isDirectory()) throw new Error('Racine source non répertoire');
   const configPath = options.tsconfig
@@ -874,6 +1030,10 @@ async function main() {
   const diagnostics = [],
     ranking = analyze(root, configPath, diagnostics);
   const effort = anchors ? estimate(ranking, anchors, overhead, lotRate, diagnostics) : null;
+  const dependencyEstimate =
+    options.dependencyEstimates && effort
+      ? dependencyEstimates(ranking, effort, diagnostics)
+      : null;
   const report = {
     schemaVersion: VERSION,
     algorithmVersions: {
@@ -894,6 +1054,7 @@ async function main() {
     diagnostics,
     ranking,
     ...(effort ? { effort } : {}),
+    ...(dependencyEstimate ? { dependencyEstimate } : {}),
   };
   const out = path.resolve(options.out),
     base = out.replace(/\.json$/i, '');

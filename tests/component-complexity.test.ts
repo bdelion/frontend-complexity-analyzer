@@ -39,6 +39,23 @@ interface ScriptReport {
     crossValidation?: { mae: number };
     lotEstimate?: { totalDays: number; savingDays: number };
   };
+  dependencyEstimate?: {
+    mode: string;
+    components: {
+      id: string;
+      ownDays: number;
+      contextDays: number | null;
+      sharedDependencies: {
+        id: string;
+        days: number;
+        depth: number;
+        sharedBy: string[];
+      }[];
+    }[];
+    independentProjectDays: number | null;
+    uniqueProjectDays: number | null;
+    differenceDays: number | null;
+  };
 }
 const script = path.resolve('scripts/component-complexity.mjs');
 const simple = {
@@ -201,6 +218,50 @@ describe('script autonome : calibration et arguments', () => {
     'components/basic/C/C.tsx':
       'export function C(){if(true)return <button aria-label="x"/>;return <button/>}',
   };
+  test('dépendances transitives : contextes indépendants et coût unique dédupliqué', async () => {
+    const f = await fixture({
+      'components/basic/Button/Button.tsx':
+        "import {useToggle} from '../../../hooks/useToggle'; export function Button(){useToggle();return <button/>}",
+      'components/basic/Tabs/Tabs.tsx':
+        "import {useToggle} from '../../../hooks/useToggle'; export function Tabs(){useToggle();return <div/>}",
+      'hooks/useToggle.ts': 'export function useToggle(){return 1}',
+    });
+    const out = path.join(f.base, 'dependencies.json');
+    const result = run(f.root, out, ['--effort', 'Button:1,Tabs:2', '--dependency-estimates']);
+    expect(result.status, result.stderr).toBe(0);
+
+    const button = result.report!.dependencyEstimate!.components.find(
+      (context) => context.id === 'components/basic/Button',
+    )!;
+    const tabs = result.report!.dependencyEstimate!.components.find(
+      (context) => context.id === 'components/basic/Tabs',
+    )!;
+    const shared = result.report!.ranking.find((row) => row.id === 'hooks/useToggle.ts')!;
+    const x = shared.estimatedDays;
+
+    expect(button.ownDays).toBe(
+      result.report!.ranking.find((row) => row.id === 'components/basic/Button')!.estimatedDays,
+    );
+    expect(tabs.ownDays).toBe(
+      result.report!.ranking.find((row) => row.id === 'components/basic/Tabs')!.estimatedDays,
+    );
+    expect(button.sharedDependencies).toHaveLength(1);
+    expect(tabs.sharedDependencies).toHaveLength(1);
+    expect(button.sharedDependencies[0]!.id).toBe('hooks/useToggle.ts');
+    expect(button.sharedDependencies[0]!.sharedBy).toEqual([
+      'components/basic/Button',
+      'components/basic/Tabs',
+    ]);
+    const round = (value: number) => Math.round(value * 10) / 10;
+    expect(button.contextDays).toBe(round(button.ownDays + x));
+    expect(tabs.contextDays).toBe(round(tabs.ownDays + x));
+    expect(result.report!.dependencyEstimate!.independentProjectDays).toBe(
+      round(button.ownDays + tabs.ownDays + 2 * x),
+    );
+    expect(result.report!.dependencyEstimate!.uniqueProjectDays).toBe(
+      round(button.ownDays + tabs.ownDays + x),
+    );
+  });
   test('S01 : le lot réutilise les jours individuels et ne facture pas les ancres deux fois', async () => {
     const f = await fixture(corpus);
     const result = run(f.root, path.join(f.base, 'result.json'), [

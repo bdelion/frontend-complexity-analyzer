@@ -68,6 +68,20 @@ Pour voir les options de ce script séparé :
 node scripts/component-complexity.mjs --help
 ```
 
+Avec des ancres et le détail des dépendances communes :
+
+```powershell
+node scripts/component-complexity.mjs --src "D:\toto" --out "D:\Rapports\toto-estimation.json" --effort "Button:1,Tabs:2,Combobox:6" --dependency-estimates
+```
+
+Cette option ajoute, dans le JSON et les vues Markdown/CSV :
+
+- le coût propre de chaque composant ;
+- le coût de ses dépendances transitives partagées ;
+- le total indépendant par composant ;
+- le coût unique dédupliqué du projet ;
+- les composants partageant chaque unité commune.
+
 ## Besoin d'aide ?
 
 - [Guide pas à pas](docs/user-guide.md) : installation, configuration, rapports et erreurs fréquentes.
