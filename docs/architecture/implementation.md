@@ -12,13 +12,15 @@ La [V4](../design/specification-v4.md) reste la référence de conception valid�
 | `interaction-analyzer.ts`    | Signaux ARIA, rôles, focus, gestionnaires et touches                                                     |
 | `test-analyzer.ts`           | Jest/Vitest/Playwright déclaratifs, ambiguïtés explicites                                                |
 | `graph.ts`, `aggregation.ts` | Cycles condensés, profondeur, agrégation sans double comptage et ratios explicites                       |
-| `models.ts`                  | Contrats Zod, valeurs/statuts/preuves, validation des références                                         |
+| `models.ts`                  | Contrats Zod, valeurs/statuts/preuves, validation des références, appartenances et couverture            |
 | `reporting.ts`               | JSON, Markdown, CSV, HTML local échappé                                                                  |
 | `comparison.ts`              | Compatibilité, deltas et archives uniques                                                                |
 | `coverage.ts`                | Bundle de couverture existant avec vérification SHA-256                                                  |
 | `sonar.ts`                   | Export Generic Issues informatif ; pas de publication                                                    |
 | `cli.ts`, `index.ts`         | Commandes et API publique, codes 0/1/2                                                                   |
 | `progress.ts`                | Indicateur stderr, phases et estimation du temps restant par phase ; observateur optionnel du moteur     |
+
+`validateReport` vérifie aussi la cohérence inverse entre propriétaires, unités propres/partagées et composants consommateurs, ainsi que les preuves, dépendances de types, candidats non résolus et le statut de couverture.
 
 ## Décisions d'implémentation
 

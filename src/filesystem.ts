@@ -1,4 +1,4 @@
-import { lstat, realpath, readdir, mkdir, writeFile, rename } from 'node:fs/promises';
+import { lstat, realpath, readdir, mkdir, writeFile, rename, rm } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 
@@ -90,10 +90,14 @@ export async function writeSafe(
   } else {
     // Remplacer le nom de sortie évite aussi de tronquer une source liée par lien physique.
     const temporary = path.join(path.dirname(destination), `.fca-${randomUUID()}.tmp`);
-    await writeFile(temporary, content, { encoding: 'utf8', flag: 'wx' });
-    if ((await safeOutput(destination, roots)) !== destination)
-      throw new Error('Destination modifiée pendant l’écriture');
-    await rename(temporary, destination);
+    try {
+      await writeFile(temporary, content, { encoding: 'utf8', flag: 'wx' });
+      if ((await safeOutput(destination, roots)) !== destination)
+        throw new Error('Destination modifiée pendant l’écriture');
+      await rename(temporary, destination);
+    } finally {
+      await rm(temporary, { force: true });
+    }
   }
 }
 

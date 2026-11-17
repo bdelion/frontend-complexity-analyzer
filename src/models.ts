@@ -186,19 +186,65 @@ export function validateReport(input: unknown): AnalysisReport {
   const components = new Set(report.components.map((c) => c.id));
   const libraries = new Set(report.libraries.map((l) => l.id));
   const diagnostics = new Set(report.diagnostics.map((d) => d.id));
+  const unitsById = new Map(report.units.map((unit) => [unit.id, unit]));
+  const componentsById = new Map(report.components.map((component) => [component.id, component]));
   const requireIds = (ids: string[], allowed: Set<string>) => {
     if (ids.some((id) => !allowed.has(id))) throw new Error('Référence inconnue dans le rapport');
   };
+  const validateEvidenceLibrary = (evidence: Evidence) =>
+    requireIds([evidence.libraryId], libraries);
   for (const unit of report.units) {
     requireIds([unit.libraryId], libraries);
     requireIds(unit.dependencies, units);
     requireIds(unit.usedByComponentIds, components);
     if (unit.ownerComponentId !== null) requireIds([unit.ownerComponentId], components);
+    unique(unit.usedByComponentIds, 'appartenances de composants');
+    requireIds(unit.typeDependencies, new Set(unit.dependencies));
+    for (const componentId of unit.usedByComponentIds) {
+      const component = componentsById.get(componentId)!;
+      if (!component.ownUnitIds.includes(unit.id) && !component.sharedUnitIds.includes(unit.id)) {
+        throw new Error('Appartenance de composant incohérente');
+      }
+    }
+    for (const detail of unit.details) validateEvidenceLibrary(detail.evidence);
+  }
+  for (const diagnostic of report.diagnostics) {
+    if (diagnostic.evidence) validateEvidenceLibrary(diagnostic.evidence);
   }
   for (const component of report.components) {
     requireIds([component.libraryId], libraries);
     requireIds([...component.ownUnitIds, ...component.sharedUnitIds], units);
     requireIds(component.diagnosticIds, diagnostics);
+    unique(component.ownUnitIds, 'unités propres');
+    unique(component.sharedUnitIds, 'unités partagées');
+    const ownUnitIds = new Set(component.ownUnitIds);
+    if (component.sharedUnitIds.some((id) => ownUnitIds.has(id)))
+      throw new Error('Une unité ne peut pas être propre et partagée');
+    for (const unitId of component.ownUnitIds) {
+      const unit = unitsById.get(unitId)!;
+      if (unit.libraryId !== component.libraryId || unit.ownerComponentId !== component.id) {
+        throw new Error('Propriétaire ou librairie de l’unité propre incohérent');
+      }
+      if (!unit.usedByComponentIds.includes(component.id))
+        throw new Error('Référence inverse d’unité propre manquante');
+    }
+    for (const unitId of component.sharedUnitIds) {
+      const unit = unitsById.get(unitId)!;
+      if (
+        unit.ownerComponentId === component.id ||
+        !unit.usedByComponentIds.includes(component.id)
+      ) {
+        throw new Error('Référence d’unité partagée incohérente');
+      }
+    }
+  }
+  for (const unit of report.units) {
+    if (
+      unit.ownerComponentId !== null &&
+      !componentsById.get(unit.ownerComponentId)!.ownUnitIds.includes(unit.id)
+    ) {
+      throw new Error('Unité absente de la liste de son propriétaire');
+    }
   }
   for (const subject of [...report.units, ...report.components, ...report.libraries]) {
     unique(
@@ -208,6 +254,7 @@ export function validateReport(input: unknown): AnalysisReport {
     for (const metric of subject.metrics) {
       if (metric.subjectId !== subject.id) throw new Error('Sujet de métrique incohérent');
       requireIds(metric.diagnosticIds, diagnostics);
+      for (const evidence of metric.evidence) validateEvidenceLibrary(evidence);
     }
   }
   const c = report.coverage;
@@ -216,6 +263,10 @@ export function validateReport(input: unknown): AnalysisReport {
     c.discoveredFiles !== c.eligibleFiles + c.excludedFiles
   ) {
     throw new Error('Couverture d’analyse incohérente');
+  }
+  requireIds(c.unresolvedCandidateIds, units);
+  if (report.status !== (c.partialFiles || c.failedFiles ? 'partial' : 'complete')) {
+    throw new Error('Statut du rapport incohérent avec sa couverture');
   }
   return report;
 }

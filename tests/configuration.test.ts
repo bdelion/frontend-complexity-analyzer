@@ -1,5 +1,5 @@
 import { expect, test, describe } from 'vitest';
-import { writeFile, mkdir, symlink, readFile, link } from 'node:fs/promises';
+import { writeFile, mkdir, symlink, readFile, link, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { loadConfiguration, fingerprint, matcher } from '../src/configuration.js';
 import { canonical, contains, portable, safeOutput, writeSafe, walk } from '../src/filesystem.js';
@@ -98,6 +98,10 @@ describe('configuration et frontières du système de fichiers', () => {
     ).rejects.toThrow('recouvre');
     await writeSafe(path.join(output, 'safe.json'), '{}', [root]);
     expect(await readFile(path.join(output, 'safe.json'), 'utf8')).toBe('{}');
+    const directoryTarget = path.join(output, 'existing-directory');
+    await mkdir(directoryTarget);
+    await expect(writeSafe(directoryTarget, '{}', [root])).rejects.toThrow();
+    expect((await readdir(output)).filter((name) => name.startsWith('.fca-'))).toEqual([]);
     const linked = path.join(output, 'hardlink.json');
     await link(path.join(root, 'Button.tsx'), linked);
     await writeSafe(linked, 'nouveau rapport', [root]);

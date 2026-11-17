@@ -125,6 +125,34 @@ describe('invariants et agrégations', () => {
       (r: typeof data.report) => {
         r.units[0]!.ownerComponentId = 'missing';
       },
+      (r: typeof data.report) => r.components[0]!.ownUnitIds.push(r.components[0]!.ownUnitIds[0]!),
+      (r: typeof data.report) =>
+        r.components[0]!.sharedUnitIds.push(r.components[0]!.ownUnitIds[0]!),
+      (r: typeof data.report) => {
+        r.components[0]!.ownUnitIds = [];
+      },
+      (r: typeof data.report) => {
+        r.units[0]!.typeDependencies.push('missing');
+      },
+      (r: typeof data.report) => {
+        r.units[0]!.details.push({
+          metricId: 'test',
+          value: 'test',
+          evidence: {
+            libraryId: 'missing',
+            relativePath: 'Button.tsx',
+            startLine: 1,
+            endLine: 1,
+            kind: 'ast',
+          },
+        });
+      },
+      (r: typeof data.report) => {
+        r.status = 'partial';
+      },
+      (r: typeof data.report) => {
+        r.coverage.unresolvedCandidateIds.push('missing');
+      },
       (r: typeof data.report) => {
         r.units[0]!.libraryId = 'missing';
       },

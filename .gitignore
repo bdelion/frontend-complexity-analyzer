@@ -9,3 +9,5 @@ history/
 docs/api/
 *.tsbuildinfo
 ci-analyzer.config.json
+.fca-*.tmp
+.complexity-*.tmp
